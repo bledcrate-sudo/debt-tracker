@@ -16,7 +16,7 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 45
     env:
-      CAP_SERVER_URL: ${{ github.event.inputs.server_url || 'https://your-debt-tracker.vercel.app' }}
+      CAP_SERVER_URL: ${{ github.event.inputs.server_url || 'https://debt-tracker-rho-eight.vercel.app' }}
 
     steps:
       - uses: actions/checkout@v4
