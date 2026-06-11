@@ -42,26 +42,39 @@ jobs:
           ls -la
           xcodebuild -resolvePackageDependencies -project App.xcodeproj -scheme App
 
+      - name: List schemes
+        working-directory: ios/App
+        run: xcodebuild -list -project App.xcodeproj
+
       - name: Build archive (no signing)
         working-directory: ios/App
+        shell: bash
         run: |
+          set -eo pipefail
           xcodebuild \
             -project App.xcodeproj \
             -scheme App \
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
-            -archivePath $PWD/build/App.xcarchive \
+            -archivePath "$PWD/build/App.xcarchive" \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            archive | tail -200
+            ONLY_ACTIVE_ARCH=NO \
+            archive
+          echo "--- archive contents ---"
+          find build/App.xcarchive -maxdepth 5 -type d
 
       - name: Package unsigned IPA
         working-directory: ios/App
+        shell: bash
         run: |
+          set -eo pipefail
+          APP_PATH=$(find build/App.xcarchive/Products/Applications -maxdepth 1 -name "*.app" -type d | head -1)
+          echo "Using app: $APP_PATH"
           mkdir -p build/Payload
-          cp -R build/App.xcarchive/Products/Applications/App.app build/Payload/
+          cp -R "$APP_PATH" build/Payload/
           cd build && zip -qr DebtTracker-unsigned.ipa Payload
           ls -lh DebtTracker-unsigned.ipa
 
