@@ -1,0 +1,31 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String?
+  createdAt DateTime @default(now())
+  entries   Entry[]
+}
+
+model Entry {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String   // "income" | "expense" | "debt"
+  label     String
+  amount    Float
+  frequency String   @default("once") // "once" | "monthly"
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}

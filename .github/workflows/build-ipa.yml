@@ -1,0 +1,68 @@
+name: Build unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: "Deployed Next.js URL the app will load"
+        required: true
+        default: "https://your-debt-tracker.vercel.app"
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 45
+    env:
+      CAP_SERVER_URL: ${{ github.event.inputs.server_url || 'https://your-debt-tracker.vercel.app' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Add iOS platform
+        run: |
+          npx cap add ios || echo "ios platform already exists"
+          npx cap sync ios
+
+      - name: Install CocoaPods
+        working-directory: ios/App
+        run: pod install --repo-update
+
+      - name: Build archive (no signing)
+        working-directory: ios/App
+        run: |
+          xcodebuild \
+            -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath $PWD/build/App.xcarchive \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            archive
+
+      - name: Package unsigned IPA
+        working-directory: ios/App
+        run: |
+          mkdir -p build/Payload
+          cp -R build/App.xcarchive/Products/Applications/App.app build/Payload/
+          cd build && zip -qr DebtTracker-unsigned.ipa Payload
+          ls -lh DebtTracker-unsigned.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DebtTracker-unsigned-ipa
+          path: ios/App/build/DebtTracker-unsigned.ipa
+          retention-days: 30

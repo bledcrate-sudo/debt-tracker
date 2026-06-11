@@ -1,0 +1,17 @@
+node_modules
+.next
+out
+dist
+.env.local
+*.log
+prisma/dev.db
+prisma/dev.db-journal
+
+# Capacitor iOS native project (regenerated each CI build)
+ios/App/Pods
+ios/App/build
+ios/App/App.xcworkspace/xcuserdata
+ios/App/App.xcodeproj/xcuserdata
+ios/App/App.xcodeproj/project.xcworkspace/xcuserdata
+DerivedData/
+*.xcuserstate
