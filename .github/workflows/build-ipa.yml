@@ -36,25 +36,26 @@ jobs:
           echo "--- ios tree ---"
           find ios -maxdepth 4 -type f | head -50
 
-      - name: Install CocoaPods
+      - name: Resolve SPM packages
         working-directory: ios/App
         run: |
           ls -la
-          pod install --repo-update
+          xcodebuild -resolvePackageDependencies -project App.xcodeproj -scheme App
 
       - name: Build archive (no signing)
         working-directory: ios/App
         run: |
           xcodebuild \
-            -workspace App.xcworkspace \
+            -project App.xcodeproj \
             -scheme App \
             -configuration Release \
             -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
             -archivePath $PWD/build/App.xcarchive \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            archive
+            archive | tail -200
 
       - name: Package unsigned IPA
         working-directory: ios/App
