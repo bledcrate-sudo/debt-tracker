@@ -42,9 +42,9 @@ jobs:
           ls -la
           xcodebuild -resolvePackageDependencies -project App.xcodeproj -scheme App
 
-      - name: List schemes
+      - name: Install CocoaPods
         working-directory: ios/App
-        run: xcodebuild -list -project App.xcodeproj
+        run: pod install --repo-update
 
       - name: Build archive (no signing)
         working-directory: ios/App
@@ -52,7 +52,7 @@ jobs:
         run: |
           set -eo pipefail
           xcodebuild \
-            -project App.xcodeproj \
+            -workspace App.xcworkspace \
             -scheme App \
             -configuration Release \
             -sdk iphoneos \
