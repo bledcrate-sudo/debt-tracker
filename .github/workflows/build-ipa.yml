@@ -31,12 +31,16 @@ jobs:
 
       - name: Add iOS platform
         run: |
-          npx cap add ios || echo "ios platform already exists"
+          npx cap add ios
           npx cap sync ios
+          echo "--- ios tree ---"
+          find ios -maxdepth 4 -type f | head -50
 
       - name: Install CocoaPods
         working-directory: ios/App
-        run: pod install --repo-update
+        run: |
+          ls -la
+          pod install --repo-update
 
       - name: Build archive (no signing)
         working-directory: ios/App
