@@ -27,6 +27,7 @@ model Entry {
   note      String?
   createdAt DateTime  @default(now())
   payments  Payment[]
+  debtPayments DebtPayment[]
 
   @@index([userId])
 }
@@ -40,5 +41,16 @@ model Payment {
   paidAt      DateTime @default(now())
 
   @@unique([entryId, month])
+  @@index([entryId])
+}
+
+model DebtPayment {
+  id      String   @id @default(cuid())
+  entryId String
+  entry   Entry    @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  amount  Float
+  note    String?
+  paidAt  DateTime @default(now())
+
   @@index([entryId])
 }

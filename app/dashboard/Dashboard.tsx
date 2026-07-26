@@ -13,6 +13,9 @@ type Entry = {
   note: string | null;
   createdAt: string;
   payments: { month: string; fromBalance: boolean }[];
+  debtPayments: { id: string; amount: number; note: string | null; paidAt: string }[];
+  originalAmount?: number;
+  paidSoFar?: number;
 };
 
 const fmt = (n: number) =>
@@ -120,9 +123,44 @@ export default function Dashboard({
     else setPayPrompt({ id: entryId, label, amount });
   }
 
+  const [debtModal, setDebtModal] = useState<{ id: string; label: string } | null>(null);
+  const [debtPayBusy, setDebtPayBusy] = useState(false);
+
+  async function logDebtPayment(entryId: string, amount: number, note?: string) {
+    setDebtPayBusy(true);
+    const r = await fetch(`/api/entries/${entryId}/debt-payments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ amount, note }),
+    });
+    setDebtPayBusy(false);
+    if (!r.ok) return alert("Failed to log payment");
+    const created = await r.json();
+    setEntries((cur) =>
+      cur.map((e) => (e.id !== entryId ? e : { ...e, debtPayments: [created, ...e.debtPayments] }))
+    );
+  }
+
+  async function undoDebtPayment(entryId: string, paymentId: string) {
+    const r = await fetch(`/api/entries/${entryId}/debt-payments/${paymentId}`, { method: "DELETE" });
+    if (!r.ok) return alert("Failed to undo payment");
+    setEntries((cur) =>
+      cur.map((e) =>
+        e.id !== entryId ? e : { ...e, debtPayments: e.debtPayments.filter((p) => p.id !== paymentId) }
+      )
+    );
+  }
+
   const income = useMemo(() => entries.filter((e) => e.type === "income"), [entries]);
   const expenses = useMemo(() => entries.filter((e) => e.type === "expense"), [entries]);
-  const debts = useMemo(() => entries.filter((e) => e.type === "debt"), [entries]);
+  const debts = useMemo(() => {
+    return entries
+      .filter((e) => e.type === "debt")
+      .map((e) => {
+        const paidSoFar = e.debtPayments.reduce((s, p) => s + p.amount, 0);
+        return { ...e, originalAmount: e.amount, paidSoFar, amount: Math.max(0, e.amount - paidSoFar) };
+      });
+  }, [entries]);
 
   const sumBy = (arr: Entry[], pred?: (e: Entry) => boolean) =>
     arr.reduce((s, e) => s + (!pred || pred(e) ? e.amount : 0), 0);
@@ -284,6 +322,7 @@ export default function Dashboard({
           onAdd={() => setModalType("debt")}
           onDelete={deleteEntry}
           showShare
+          onLogPayment={(id, label) => setDebtModal({ id, label })}
         />
       </section>
 
@@ -479,6 +518,23 @@ export default function Dashboard({
           onChoose={(fromBalance) => markPaid(payPrompt.id, fromBalance)}
         />
       )}
+
+      {debtModal && (() => {
+        const entry = debts.find((d) => d.id === debtModal.id);
+        if (!entry) return null;
+        return (
+          <DebtPaymentModal
+            label={debtModal.label}
+            remaining={entry.amount}
+            originalAmount={entry.originalAmount ?? entry.amount}
+            history={entry.debtPayments}
+            busy={debtPayBusy}
+            onClose={() => setDebtModal(null)}
+            onLogPayment={(amount, note) => logDebtPayment(debtModal.id, amount, note)}
+            onUndo={(paymentId) => undoDebtPayment(debtModal.id, paymentId)}
+          />
+        );
+      })()}
     </main>
   );
 }
@@ -496,6 +552,7 @@ function CategoryTable({
   selectedMonth,
   onTogglePaid,
   payBusy,
+  onLogPayment,
 }: {
   title: string;
   color: "emerald" | "rose" | "amber";
@@ -507,6 +564,7 @@ function CategoryTable({
   selectedMonth?: string;
   onTogglePaid?: (id: string, paid: boolean, label: string, amount: number) => void;
   payBusy?: string | null;
+  onLogPayment?: (id: string, label: string) => void;
 }) {
   const map = {
     emerald: { bar: "bg-emerald-500", text: "text-emerald-400", chip: "bg-emerald-500/15 border-emerald-500/30", btn: "bg-emerald-500 hover:bg-emerald-400 text-slate-950" },
@@ -562,6 +620,11 @@ function CategoryTable({
                     </span>
                   </p>
                   {e.note && <p className="text-xs text-slate-500 truncate">{e.note}</p>}
+                  {onLogPayment && !!e.paidSoFar && (
+                    <p className="text-xs text-slate-500 truncate">
+                      {fmt(e.paidSoFar)} paid of {fmt(e.originalAmount ?? e.amount)}
+                    </p>
+                  )}
                 </td>
                 <td className={`px-4 py-2.5 text-right tabular-nums font-semibold ${map.text}`}>
                   {fmt(e.amount)}
@@ -591,13 +654,23 @@ function CategoryTable({
                   </td>
                 )}
                 <td className="px-4 py-2.5 text-right">
-                  <button
-                    onClick={() => onDelete(e.id)}
-                    className="text-slate-500 hover:text-rose-400"
-                    title="Delete"
-                  >
-                    ✕
-                  </button>
+                  <div className="flex items-center justify-end gap-2">
+                    {onLogPayment && (
+                      <button
+                        onClick={() => onLogPayment(e.id, e.label)}
+                        className="px-2 py-1 rounded-lg text-xs font-semibold bg-amber-500/15 border border-amber-500/30 text-amber-300 hover:bg-amber-500/25"
+                      >
+                        + Payment
+                      </button>
+                    )}
+                    <button
+                      onClick={() => onDelete(e.id)}
+                      className="text-slate-500 hover:text-rose-400"
+                      title="Delete"
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </td>
               </tr>
               );
@@ -825,6 +898,108 @@ function PaySourceModal({
             <p className="text-xs text-slate-400 mt-0.5">Paid from outside money — balance stays unaffected.</p>
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function DebtPaymentModal({
+  label,
+  remaining,
+  originalAmount,
+  history,
+  busy,
+  onClose,
+  onLogPayment,
+  onUndo,
+}: {
+  label: string;
+  remaining: number;
+  originalAmount: number;
+  history: { id: string; amount: number; note: string | null; paidAt: string }[];
+  busy: boolean;
+  onClose: () => void;
+  onLogPayment: (amount: number, note?: string) => void;
+  onUndo: (paymentId: string) => void;
+}) {
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    const n = parseFloat(amount);
+    if (isNaN(n) || n <= 0) return;
+    onLogPayment(n, note.trim() || undefined);
+    setAmount("");
+    setNote("");
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm grid place-items-center z-50 p-4" onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl max-h-[85vh] overflow-y-auto"
+      >
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-xl font-bold">Payments — {label}</h2>
+          <button onClick={onClose} className="text-slate-500 hover:text-white">✕</button>
+        </div>
+        <p className="text-slate-400 text-sm mb-4">
+          {fmt(remaining)} remaining of {fmt(originalAmount)}
+        </p>
+
+        <form onSubmit={submit} className="space-y-2 mb-5">
+          <input
+            autoFocus
+            type="number"
+            step="0.01"
+            min="0.01"
+            placeholder="Payment amount"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-amber-500 outline-none"
+          />
+          <input
+            placeholder="Note (optional)"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-amber-500 outline-none"
+          />
+          <button
+            disabled={busy}
+            className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold disabled:opacity-50"
+          >
+            {busy ? "Logging..." : "Log payment"}
+          </button>
+        </form>
+
+        <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">History</p>
+        {history.length === 0 ? (
+          <p className="text-sm text-slate-500 italic">No payments logged yet.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {history.map((p) => (
+              <div
+                key={p.id}
+                className="flex items-center justify-between gap-2 bg-slate-800/60 border border-slate-700 rounded-lg px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <p className="font-medium tabular-nums text-emerald-300">{fmt(p.amount)}</p>
+                  <p className="text-xs text-slate-500 truncate">
+                    {new Date(p.paidAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+                    {p.note ? ` · ${p.note}` : ""}
+                  </p>
+                </div>
+                <button
+                  onClick={() => onUndo(p.id)}
+                  className="text-xs text-slate-500 hover:text-rose-400 shrink-0"
+                >
+                  Undo
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
