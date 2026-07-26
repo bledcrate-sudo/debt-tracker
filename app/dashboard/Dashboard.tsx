@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { signOut } from "next-auth/react";
 
 type EntryType = "income" | "expense" | "debt";
@@ -12,12 +12,26 @@ type Entry = {
   frequency: string;
   note: string | null;
   createdAt: string;
+  payments: { month: string; fromBalance: boolean }[];
 };
 
 const fmt = (n: number) =>
   n.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 2 });
 
 const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
+
+const monthKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+
+const shiftMonth = (key: string, delta: number) => {
+  const [y, m] = key.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return monthKey(d);
+};
+
+const monthDisplay = (key: string) => {
+  const [y, m] = key.split("-").map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+};
 
 export default function Dashboard({
   initialEntries,
@@ -34,6 +48,78 @@ export default function Dashboard({
   const [strategy, setStrategy] = useState<"avalanche" | "snowball">("avalanche");
   const [payoutPct, setPayoutPct] = useState(50);
 
+  const [currentMonth, setCurrentMonth] = useState(() => monthKey(new Date()));
+  const startMonth = useMemo(() => {
+    if (entries.length === 0) return currentMonth;
+    const earliest = entries.reduce(
+      (min, e) => (e.createdAt < min ? e.createdAt : min),
+      entries[0].createdAt
+    );
+    const key = monthKey(new Date(earliest));
+    return key < currentMonth ? key : currentMonth;
+  }, [entries, currentMonth]);
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
+  const [payBusy, setPayBusy] = useState<string | null>(null);
+  const [payPrompt, setPayPrompt] = useState<{ id: string; label: string; amount: number } | null>(null);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      const now = monthKey(new Date());
+      setCurrentMonth((prev) => {
+        if (now === prev) return prev;
+        setSelectedMonth((sel) => (sel === prev ? now : sel));
+        return now;
+      });
+    }, 60 * 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  async function unmarkPaid(entryId: string) {
+    setPayBusy(entryId);
+    const r = await fetch(`/api/entries/${entryId}/pay`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ month: selectedMonth }),
+    });
+    setPayBusy(null);
+    if (!r.ok) return alert("Failed to update paid status");
+    setEntries((cur) =>
+      cur.map((e) =>
+        e.id !== entryId ? e : { ...e, payments: e.payments.filter((p) => p.month !== selectedMonth) }
+      )
+    );
+  }
+
+  async function markPaid(entryId: string, fromBalance: boolean) {
+    setPayPrompt(null);
+    setPayBusy(entryId);
+    const r = await fetch(`/api/entries/${entryId}/pay`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ month: selectedMonth, fromBalance }),
+    });
+    setPayBusy(null);
+    if (!r.ok) return alert("Failed to update paid status");
+    setEntries((cur) =>
+      cur.map((e) =>
+        e.id !== entryId
+          ? e
+          : {
+              ...e,
+              payments: [
+                ...e.payments.filter((p) => p.month !== selectedMonth),
+                { month: selectedMonth, fromBalance },
+              ],
+            }
+      )
+    );
+  }
+
+  function togglePaid(entryId: string, paid: boolean, label: string, amount: number) {
+    if (paid) unmarkPaid(entryId);
+    else setPayPrompt({ id: entryId, label, amount });
+  }
+
   const income = useMemo(() => entries.filter((e) => e.type === "income"), [entries]);
   const expenses = useMemo(() => entries.filter((e) => e.type === "expense"), [entries]);
   const debts = useMemo(() => entries.filter((e) => e.type === "debt"), [entries]);
@@ -47,8 +133,18 @@ export default function Dashboard({
   const monthlyExpense = useMemo(() => sumBy(expenses, (e) => e.frequency === "monthly"), [expenses]);
   const oneTimeIncome = totalIncome - monthlyIncome;
   const oneTimeExpense = totalExpense - monthlyExpense;
-  const monthlySurplus = monthlyIncome - monthlyExpense;
-  const surplus = totalIncome - totalExpense;
+  const offBalancePaid = useMemo(
+    () =>
+      sumBy(expenses, (e) =>
+        e.frequency === "monthly" &&
+        e.payments.some((p) => p.month === selectedMonth && !p.fromBalance)
+      ),
+    [expenses, selectedMonth]
+  );
+  const adjustedTotalExpense = totalExpense - offBalancePaid;
+  const adjustedMonthlyExpense = monthlyExpense - offBalancePaid;
+  const monthlySurplus = monthlyIncome - adjustedMonthlyExpense;
+  const surplus = totalIncome - adjustedTotalExpense;
   const balance = surplus - totalDebt;
   const dti = monthlyIncome > 0 ? totalDebt / (monthlyIncome * 12) : 0;
   const monthlyToDebt = Math.max(0, monthlySurplus * (payoutPct / 100));
@@ -109,17 +205,45 @@ export default function Dashboard({
           </h1>
           <p className="text-slate-400 text-sm">Your money, tracked.</p>
         </div>
-        <button
-          onClick={() => signOut({ callbackUrl: "/login" })}
-          className="px-4 py-2 rounded-xl border border-slate-700 hover:bg-slate-800 transition text-sm"
-        >
-          Sign out
-        </button>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1 bg-slate-900/60 border border-slate-800 rounded-xl px-1 py-1">
+            <button
+              onClick={() => setSelectedMonth((m) => shiftMonth(m, -1))}
+              disabled={selectedMonth <= startMonth}
+              className="px-2 py-1.5 rounded-lg text-sm text-slate-300 hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent"
+              title="Previous month"
+            >
+              ‹
+            </button>
+            <span className="px-2 text-sm font-medium tabular-nums min-w-[9rem] text-center">
+              {monthDisplay(selectedMonth)}
+            </span>
+            <button
+              onClick={() => setSelectedMonth((m) => shiftMonth(m, 1))}
+              disabled={selectedMonth >= currentMonth}
+              className="px-2 py-1.5 rounded-lg text-sm text-slate-300 hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent"
+              title="Next month"
+            >
+              ›
+            </button>
+          </div>
+          <button
+            onClick={() => signOut({ callbackUrl: "/login" })}
+            className="px-4 py-2 rounded-xl border border-slate-700 hover:bg-slate-800 transition text-sm"
+          >
+            Sign out
+          </button>
+        </div>
       </header>
 
       {/* Summary cards */}
       <section className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        <StatCard label="Balance" value={fmt(balance)} accent={balance >= 0 ? "emerald" : "rose"} />
+        <StatCard
+          label="Balance"
+          value={fmt(balance)}
+          accent={balance >= 0 ? "emerald" : "rose"}
+          sub={offBalancePaid > 0 ? `${fmt(offBalancePaid)} paid off-balance` : undefined}
+        />
         <StatCard label="Income" value={fmt(totalIncome)} accent="emerald" />
         <StatCard label="Expenses" value={fmt(totalExpense)} accent="rose" />
         <StatCard label="Debt" value={fmt(totalDebt)} accent="amber" />
@@ -148,6 +272,9 @@ export default function Dashboard({
           total={totalExpense}
           onAdd={() => setModalType("expense")}
           onDelete={deleteEntry}
+          selectedMonth={selectedMonth}
+          onTogglePaid={togglePaid}
+          payBusy={payBusy}
         />
         <CategoryTable
           title="Debt"
@@ -342,6 +469,16 @@ export default function Dashboard({
           busy={busy}
         />
       )}
+
+      {payPrompt && (
+        <PaySourceModal
+          label={payPrompt.label}
+          amount={payPrompt.amount}
+          busy={payBusy === payPrompt.id}
+          onClose={() => setPayPrompt(null)}
+          onChoose={(fromBalance) => markPaid(payPrompt.id, fromBalance)}
+        />
+      )}
     </main>
   );
 }
@@ -356,6 +493,9 @@ function CategoryTable({
   onAdd,
   onDelete,
   showShare,
+  selectedMonth,
+  onTogglePaid,
+  payBusy,
 }: {
   title: string;
   color: "emerald" | "rose" | "amber";
@@ -364,6 +504,9 @@ function CategoryTable({
   onAdd: () => void;
   onDelete: (id: string) => void;
   showShare?: boolean;
+  selectedMonth?: string;
+  onTogglePaid?: (id: string, paid: boolean, label: string, amount: number) => void;
+  payBusy?: string | null;
 }) {
   const map = {
     emerald: { bar: "bg-emerald-500", text: "text-emerald-400", chip: "bg-emerald-500/15 border-emerald-500/30", btn: "bg-emerald-500 hover:bg-emerald-400 text-slate-950" },
@@ -389,19 +532,22 @@ function CategoryTable({
               <th className="text-left px-4 py-2">Label</th>
               <th className="text-right px-4 py-2">Amount</th>
               {showShare && <th className="text-right px-4 py-2">Share</th>}
+              {onTogglePaid && <th className="text-center px-4 py-2">Paid</th>}
               <th className="px-4 py-2 w-8"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800">
             {rows.length === 0 && (
               <tr>
-                <td colSpan={showShare ? 4 : 3} className="text-center py-8 text-slate-500 italic">
+                <td colSpan={(showShare ? 4 : 3) + (onTogglePaid ? 1 : 0)} className="text-center py-8 text-slate-500 italic">
                   Empty — click + Add
                 </td>
               </tr>
             )}
-            {rows.map((e) => (
-              <tr key={e.id} className="hover:bg-slate-800/40">
+            {rows.map((e) => {
+              const paid = !!selectedMonth && e.payments.some((p) => p.month === selectedMonth);
+              return (
+              <tr key={e.id} className={`hover:bg-slate-800/40 ${paid ? "bg-emerald-500/5" : ""}`}>
                 <td className="px-4 py-2.5">
                   <p className="font-medium truncate flex items-center gap-2">
                     {e.label}
@@ -425,6 +571,25 @@ function CategoryTable({
                     {total ? pct(e.amount / total) : "—"}
                   </td>
                 )}
+                {onTogglePaid && (
+                  <td className="px-4 py-2.5 text-center">
+                    {e.frequency === "monthly" ? (
+                      <button
+                        onClick={() => onTogglePaid(e.id, paid, e.label, e.amount)}
+                        disabled={payBusy === e.id}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition disabled:opacity-50 ${
+                          paid
+                            ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-300"
+                            : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+                        }`}
+                      >
+                        {paid ? "✓ Paid" : "Mark paid"}
+                      </button>
+                    ) : (
+                      <span className="text-slate-600">—</span>
+                    )}
+                  </td>
+                )}
                 <td className="px-4 py-2.5 text-right">
                   <button
                     onClick={() => onDelete(e.id)}
@@ -435,7 +600,8 @@ function CategoryTable({
                   </button>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -612,6 +778,53 @@ function EntryModal({
             {busy ? "Saving..." : "Save"}
           </button>
         </form>
+      </div>
+    </div>
+  );
+}
+
+function PaySourceModal({
+  label,
+  amount,
+  busy,
+  onClose,
+  onChoose,
+}: {
+  label: string;
+  amount: number;
+  busy: boolean;
+  onClose: () => void;
+  onChoose: (fromBalance: boolean) => void;
+}) {
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm grid place-items-center z-50 p-4" onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl"
+      >
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-xl font-bold">Mark "{label}" as paid</h2>
+          <button onClick={onClose} className="text-slate-500 hover:text-white">✕</button>
+        </div>
+        <p className="text-slate-400 text-sm mb-4">{fmt(amount)} — where did this payment come from?</p>
+        <div className="space-y-2">
+          <button
+            disabled={busy}
+            onClick={() => onChoose(true)}
+            className="w-full text-left px-4 py-3 rounded-xl border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 transition disabled:opacity-50"
+          >
+            <p className="font-semibold text-emerald-300">From balance</p>
+            <p className="text-xs text-slate-400 mt-0.5">Deducted from your tracked income — reduces balance.</p>
+          </button>
+          <button
+            disabled={busy}
+            onClick={() => onChoose(false)}
+            className="w-full text-left px-4 py-3 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 transition disabled:opacity-50"
+          >
+            <p className="font-semibold text-white">Off balance</p>
+            <p className="text-xs text-slate-400 mt-0.5">Paid from outside money — balance stays unaffected.</p>
+          </button>
+        </div>
       </div>
     </div>
   );

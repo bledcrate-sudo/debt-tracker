@@ -23,6 +23,7 @@ export async function GET() {
   const entries = await prisma.entry.findMany({
     where: { userId },
     orderBy: { createdAt: "desc" },
+    include: { payments: true },
   });
   return NextResponse.json(entries);
 }
@@ -42,7 +43,7 @@ export async function POST(req: Request) {
         user: { connect: { id: userId } },
       },
     });
-    return NextResponse.json(entry);
+    return NextResponse.json({ ...entry, payments: [] });
   } catch (e: any) {
     return NextResponse.json({ error: e.message ?? "Invalid" }, { status: 400 });
   }

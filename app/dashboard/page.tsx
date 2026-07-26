@@ -11,12 +11,14 @@ export default async function DashboardPage() {
   const entries = await prisma.entry.findMany({
     where: { userId },
     orderBy: { createdAt: "desc" },
+    include: { payments: true },
   });
   return (
     <Dashboard
       initialEntries={entries.map((e) => ({
         ...e,
         createdAt: e.createdAt.toISOString(),
+        payments: e.payments.map((p) => ({ month: p.month, fromBalance: p.fromBalance })),
       }))}
       userEmail={session.user?.email ?? ""}
       userName={session.user?.name ?? null}
