@@ -12,6 +12,7 @@ model User {
   email     String   @unique
   password  String
   name      String?
+  currency  String   @default("USD")
   createdAt DateTime @default(now())
   entries   Entry[]
 }

@@ -22,8 +22,62 @@ type Entry = {
   chargedSoFar?: number;
 };
 
-const fmt = (n: number) =>
-  n.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 2 });
+// Set once per render from the user's saved preference, so every fmt() call
+// below (including the ones inside subcomponents) formats in their currency.
+let activeCurrency = "USD";
+
+const fmt = (n: number) => {
+  try {
+    return n.toLocaleString(undefined, {
+      style: "currency",
+      currency: activeCurrency,
+      maximumFractionDigits: 2,
+    });
+  } catch {
+    return n.toLocaleString(undefined, { style: "currency", currency: "USD" });
+  }
+};
+
+const CURRENCY_FALLBACK = [
+  "USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "CNY", "INR", "BRL",
+  "MXN", "ZAR", "SEK", "NOK", "DKK", "PLN", "TRY", "RUB", "KRW", "SGD",
+  "HKD", "NZD", "AED", "SAR", "EGP", "NGN", "KES", "MAD", "TND", "DZD",
+  "ILS", "THB", "IDR", "MYR", "PHP", "VND", "PKR", "BDT", "LKR", "CZK",
+  "HUF", "RON", "UAH", "CLP", "COP", "ARS", "PEN", "TWD", "QAR", "KWD",
+];
+
+const allCurrencies = (): string[] => {
+  const supported = (Intl as any).supportedValuesOf;
+  if (typeof supported === "function") {
+    try {
+      return supported.call(Intl, "currency") as string[];
+    } catch {
+      /* fall through */
+    }
+  }
+  return CURRENCY_FALLBACK;
+};
+
+const currencyName = (code: string) => {
+  try {
+    const dn = new Intl.DisplayNames(undefined, { type: "currency" });
+    return dn.of(code) ?? code;
+  } catch {
+    return code;
+  }
+};
+
+const currencySymbol = (code: string) => {
+  try {
+    const parts = new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: code,
+    }).formatToParts(0);
+    return parts.find((p) => p.type === "currency")?.value ?? code;
+  } catch {
+    return code;
+  }
+};
 
 const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
 
@@ -62,11 +116,17 @@ export default function Dashboard({
   initialEntries,
   userEmail,
   userName,
+  userCurrency,
 }: {
   initialEntries: Entry[];
   userEmail: string;
   userName: string | null;
+  userCurrency: string;
 }) {
+  const [currency, setCurrency] = useState(userCurrency);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  activeCurrency = currency;
+
   const [entries, setEntries] = useState<Entry[]>(initialEntries);
   const [modalType, setModalType] = useState<EntryType | null>(null);
   const [busy, setBusy] = useState(false);
@@ -392,6 +452,17 @@ export default function Dashboard({
               ›
             </button>
           </div>
+          <button
+            onClick={() => setSettingsOpen(true)}
+            title="Settings"
+            aria-label="Settings"
+            className="p-2.5 rounded-xl border border-slate-700 hover:bg-slate-800 transition text-slate-300 hover:text-white"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
           <button
             onClick={() => signOut({ callbackUrl: "/login" })}
             className="px-4 py-2 rounded-xl border border-slate-700 hover:bg-slate-800 transition text-sm whitespace-nowrap"
@@ -812,6 +883,17 @@ export default function Dashboard({
           onClose={() => setModalType(null)}
           onSubmit={addEntry}
           busy={busy}
+        />
+      )}
+
+      {settingsOpen && (
+        <SettingsModal
+          currency={currency}
+          onClose={() => setSettingsOpen(false)}
+          onSaved={(code) => {
+            setCurrency(code);
+            setSettingsOpen(false);
+          }}
         />
       )}
 
@@ -1277,6 +1359,102 @@ function EntryModal({
             {busy ? "Saving..." : "Save"}
           </button>
         </form>
+      </div>
+    </div>
+  );
+}
+
+function SettingsModal({
+  currency,
+  onClose,
+  onSaved,
+}: {
+  currency: string;
+  onClose: () => void;
+  onSaved: (code: string) => void;
+}) {
+  useEscapeClose(onClose);
+  const [picked, setPicked] = useState(currency);
+  const [query, setQuery] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const options = useMemo(() => {
+    const codes = allCurrencies();
+    return codes.map((code) => ({ code, name: currencyName(code), symbol: currencySymbol(code) }));
+  }, []);
+
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter((o) => o.code.toLowerCase().includes(q) || o.name.toLowerCase().includes(q));
+  }, [options, query]);
+
+  async function save() {
+    setBusy(true);
+    const r = await fetch("/api/settings", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ currency: picked }),
+    });
+    setBusy(false);
+    if (!r.ok) return alert("Failed to save currency");
+    onSaved(picked);
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm grid place-items-center z-50 p-4" onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md shadow-2xl flex flex-col max-h-[85vh]"
+      >
+        <div className="p-6 pb-3 shrink-0">
+          <div className="flex items-center justify-between mb-1">
+            <h2 className="text-xl font-bold">Settings</h2>
+            <button onClick={onClose} className="text-slate-500 hover:text-white text-lg leading-none p-1">✕</button>
+          </div>
+          <p className="text-slate-400 text-sm mb-4">
+            Currency — everything is displayed in {currencySymbol(picked)} {picked}.
+          </p>
+          <input
+            autoFocus
+            placeholder="Search currency (e.g. euro, CAD)"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-emerald-500 outline-none"
+          />
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 space-y-1 min-h-0">
+          {shown.length === 0 && <p className="text-sm text-slate-500 italic py-4">No currency matches that.</p>}
+          {shown.map((o) => (
+            <button
+              key={o.code}
+              onClick={() => setPicked(o.code)}
+              className={`w-full text-left px-4 py-3 rounded-xl border transition flex items-center gap-3 ${
+                picked === o.code
+                  ? "bg-emerald-500/15 border-emerald-500/50"
+                  : "bg-slate-800/60 border-slate-700/60 hover:border-slate-600"
+              }`}
+            >
+              <span className="w-12 shrink-0 font-semibold tabular-nums text-slate-300">{o.symbol}</span>
+              <span className="flex-1 min-w-0">
+                <span className="font-medium">{o.code}</span>
+                <span className="block text-xs text-slate-500 truncate">{o.name}</span>
+              </span>
+              {picked === o.code && <span className="text-emerald-400 shrink-0">✓</span>}
+            </button>
+          ))}
+        </div>
+
+        <div className="p-6 pt-4 shrink-0 border-t border-slate-800">
+          <button
+            onClick={save}
+            disabled={busy}
+            className="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold disabled:opacity-50"
+          >
+            {busy ? "Saving..." : "Save"}
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -8,6 +8,10 @@ export default async function DashboardPage() {
   const session = await getServerSession(authOptions);
   if (!session) redirect("/login");
   const userId = (session.user as any).id as string;
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { currency: true },
+  });
   const entries = await prisma.entry.findMany({
     where: { userId },
     orderBy: { createdAt: "desc" },
@@ -30,6 +34,7 @@ export default async function DashboardPage() {
       }))}
       userEmail={session.user?.email ?? ""}
       userName={session.user?.name ?? null}
+      userCurrency={user?.currency ?? "USD"}
     />
   );
 }
