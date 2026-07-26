@@ -26,6 +26,7 @@ model Entry {
   frequency String    @default("once") // "once" | "monthly"
   apr        Float?   // annual interest rate %, debts only
   minPayment Float?   // required minimum monthly payment, debts only
+  dueDay     Int?     // day of month payment is due (1-31), debts only
   note      String?
   createdAt DateTime  @default(now())
   payments  Payment[]

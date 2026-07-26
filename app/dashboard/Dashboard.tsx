@@ -12,6 +12,7 @@ type Entry = {
   frequency: string;
   apr?: number | null;
   minPayment?: number | null;
+  dueDay?: number | null;
   note: string | null;
   createdAt: string;
   payments: { month: string; fromBalance: boolean }[];
@@ -37,6 +38,24 @@ const shiftMonth = (key: string, delta: number) => {
 const monthDisplay = (key: string) => {
   const [y, m] = key.split("-").map(Number);
   return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+};
+
+function useEscapeClose(onClose: () => void) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+}
+
+const daysUntilDue = (dueDay: number) => {
+  const now = new Date();
+  const today = now.getDate();
+  if (dueDay >= today) return dueDay - today;
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  return daysInMonth - today + dueDay;
 };
 
 export default function Dashboard({
@@ -225,70 +244,38 @@ export default function Dashboard({
 
   // Amortization simulation: minimums on every debt, extra rolls into the
   // target debt, freed minimums snowball forward, interest accrues monthly.
-  const plan = useMemo(() => {
-    const MAX_MONTHS = 600;
-    const order = [...debts].filter((d) => d.amount > 0);
-    if (strategy === "avalanche")
-      order.sort((a, b) => (b.apr ?? 0) - (a.apr ?? 0) || b.amount - a.amount);
-    else order.sort((a, b) => a.amount - b.amount);
+  const [whatIfExtra, setWhatIfExtra] = useState(0);
 
-    const sim = order.map((d) => ({
-      id: d.id,
-      balance: d.amount,
-      apr: d.apr ?? 0,
-      min: d.minPayment ?? 0,
-      eta: Infinity as number,
-      interest: 0,
-    }));
-    const totalMin = sim.reduce((s, d) => s + d.min, 0);
-    let totalInterest = 0;
-    let month = 0;
-
-    while (sim.some((d) => d.balance > 0.005) && month < MAX_MONTHS) {
-      month++;
-      let extra = monthlyToDebt + totalMin - sim.filter((d) => d.balance > 0.005).reduce((s, d) => s + d.min, 0);
-      // interest accrual
-      for (const d of sim) {
-        if (d.balance <= 0.005) continue;
-        const i = (d.balance * d.apr) / 1200;
-        d.balance += i;
-        d.interest += i;
-        totalInterest += i;
-      }
-      // minimum payments
-      for (const d of sim) {
-        if (d.balance <= 0.005) continue;
-        const pay = Math.min(d.min, d.balance);
-        d.balance -= pay;
-        if (d.balance <= 0.005 && d.eta === Infinity) d.eta = month;
-      }
-      // extra to target in strategy order
-      for (const d of sim) {
-        if (extra <= 0) break;
-        if (d.balance <= 0.005) continue;
-        const pay = Math.min(extra, d.balance);
-        d.balance -= pay;
-        extra -= pay;
-        if (d.balance <= 0.005 && d.eta === Infinity) d.eta = month;
-      }
-      if (monthlyToDebt + totalMin <= 0) break; // nothing being paid at all
-    }
-
-    const done = sim.every((d) => d.balance <= 0.005);
-    const byId = new Map(sim.map((d) => [d.id, d]));
-    return {
-      order: order.map((d) => {
-        const s = byId.get(d.id)!;
-        return { ...d, months: s.eta, eta: s.eta, interest: s.interest };
-      }),
-      monthsToClear: done && month > 0 ? Math.max(...sim.map((d) => (d.eta === Infinity ? 0 : d.eta)), 0) || Infinity : Infinity,
-      totalInterest: done ? totalInterest : Infinity,
-    };
-  }, [debts, strategy, monthlyToDebt]);
+  const plan = useMemo(
+    () => simulatePayoff(debts, strategy, monthlyToDebt),
+    [debts, strategy, monthlyToDebt]
+  );
+  const altPlan = useMemo(
+    () => simulatePayoff(debts, strategy === "avalanche" ? "snowball" : "avalanche", monthlyToDebt),
+    [debts, strategy, monthlyToDebt]
+  );
+  const whatIfPlan = useMemo(
+    () => (whatIfExtra > 0 ? simulatePayoff(debts, strategy, monthlyToDebt + whatIfExtra) : null),
+    [debts, strategy, monthlyToDebt, whatIfExtra]
+  );
   const payoffOrder = plan.order;
   const monthsToClear = debts.length === 0 ? 0 : plan.monthsToClear;
 
-  async function addEntry(payload: { type: EntryType; label: string; amount: number; frequency: "once" | "monthly"; apr?: number; minPayment?: number; note?: string }) {
+  // Overall payoff progress across all debts (paid vs everything owed so far).
+  const totalOwedEver = useMemo(
+    () => debts.reduce((s, d) => s + (d.originalAmount ?? d.amount) + (d.chargedSoFar ?? 0), 0),
+    [debts]
+  );
+  const overallProgress = totalOwedEver > 0 ? 1 - totalDebt / totalOwedEver : 0;
+  const milestone =
+    totalOwedEver <= 0 ? null
+    : overallProgress >= 1 ? { pct: 100, msg: "DEBT-FREE! Every balance cleared. 🎉" }
+    : overallProgress >= 0.75 ? { pct: 75, msg: "75% of your debt is gone — the finish line is visible." }
+    : overallProgress >= 0.5 ? { pct: 50, msg: "Halfway there — over half your debt is paid off." }
+    : overallProgress >= 0.25 ? { pct: 25, msg: "First quarter down — momentum is building." }
+    : null;
+
+  async function addEntry(payload: { type: EntryType; label: string; amount: number; frequency: "once" | "monthly"; apr?: number; minPayment?: number; dueDay?: number; note?: string }) {
     setBusy(true);
     const r = await fetch("/api/entries", {
       method: "POST",
@@ -323,7 +310,7 @@ export default function Dashboard({
 
   return (
     <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-8">
-      <header className="flex items-center justify-between">
+      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold">
             Hello, <span className="text-emerald-400">{userName || userEmail.split("@")[0]}</span>
@@ -354,7 +341,7 @@ export default function Dashboard({
           </div>
           <button
             onClick={() => signOut({ callbackUrl: "/login" })}
-            className="px-4 py-2 rounded-xl border border-slate-700 hover:bg-slate-800 transition text-sm"
+            className="px-4 py-2 rounded-xl border border-slate-700 hover:bg-slate-800 transition text-sm whitespace-nowrap"
           >
             Sign out
           </button>
@@ -375,9 +362,31 @@ export default function Dashboard({
           label="Monthly surplus"
           value={fmt(monthlySurplus)}
           accent={monthlySurplus >= 0 ? "sky" : "rose"}
-          sub={`Recurring · DTI ${pct(dti)}`}
+          sub="Recurring income − expenses"
         />
       </section>
+
+      {milestone && (
+        <section
+          className={`rounded-2xl border p-4 flex items-center gap-4 ${
+            milestone.pct === 100
+              ? "bg-emerald-500/15 border-emerald-500/40"
+              : "bg-emerald-500/10 border-emerald-500/25"
+          }`}
+        >
+          <span className="text-3xl">{milestone.pct === 100 ? "🏆" : "🎯"}</span>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-emerald-300">{milestone.pct === 100 ? "Debt-free!" : `${milestone.pct}% paid off`}</p>
+            <p className="text-sm text-slate-300">{milestone.msg}</p>
+            <div className="mt-2 h-2 w-full bg-slate-800 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-emerald-500 rounded-full transition-all"
+                style={{ width: `${Math.min(100, overallProgress * 100)}%` }}
+              />
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Three category tables */}
       <section className="grid lg:grid-cols-3 gap-6">
@@ -469,7 +478,7 @@ export default function Dashboard({
             <h2 className="text-xl font-bold flex items-center gap-2">
               <span>Debt payment plan</span>
               <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                AI-style
+                Smart plan
               </span>
             </h2>
             <p className="text-slate-400 text-sm">
@@ -498,6 +507,27 @@ export default function Dashboard({
           </div>
         </div>
 
+        {plan.monthsToClear !== Infinity && altPlan.monthsToClear !== Infinity && debts.length > 1 &&
+          Math.abs(plan.totalInterest - altPlan.totalInterest) >= 1 && (
+          <p className="text-xs text-slate-400 -mt-2 mb-4">
+            {plan.totalInterest <= altPlan.totalInterest ? (
+              <>
+                <span className="text-emerald-300 font-semibold capitalize">{strategy}</span> saves{" "}
+                <span className="text-emerald-300">{fmt(altPlan.totalInterest - plan.totalInterest)}</span> in interest
+                {altPlan.monthsToClear > plan.monthsToClear &&
+                  ` and ${altPlan.monthsToClear - plan.monthsToClear} month${altPlan.monthsToClear - plan.monthsToClear === 1 ? "" : "s"}`}{" "}
+                vs {strategy === "avalanche" ? "snowball" : "avalanche"}.
+              </>
+            ) : (
+              <>
+                Switching to{" "}
+                <span className="text-amber-300 font-semibold">{strategy === "avalanche" ? "snowball" : "avalanche"}</span>{" "}
+                would save <span className="text-amber-300">{fmt(plan.totalInterest - altPlan.totalInterest)}</span> in interest.
+              </>
+            )}
+          </p>
+        )}
+
         <div className="grid sm:grid-cols-4 gap-3 mb-5">
           <MiniStat label="Apply to debt / mo" value={fmt(monthlyToDebt)} />
           <MiniStat
@@ -524,6 +554,51 @@ export default function Dashboard({
             </div>
           </div>
         </div>
+
+        {debts.length > 0 && (
+          <div className="grid md:grid-cols-2 gap-3 mb-5">
+            <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-3">
+              <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">
+                What if I paid more each month?
+              </p>
+              <div className="flex items-center gap-3">
+                <span className="text-slate-400 text-sm">+</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={10}
+                  value={whatIfExtra || ""}
+                  placeholder="0"
+                  onChange={(e) => setWhatIfExtra(Math.max(0, parseFloat(e.target.value) || 0))}
+                  className="w-24 px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 focus:border-amber-500 outline-none text-sm tabular-nums"
+                />
+                <span className="text-slate-400 text-sm">/mo extra</span>
+              </div>
+              {whatIfPlan && plan.monthsToClear !== Infinity && whatIfPlan.monthsToClear !== Infinity && (
+                <p className="text-sm mt-2 text-emerald-300">
+                  Debt-free {plan.monthsToClear - whatIfPlan.monthsToClear} month
+                  {plan.monthsToClear - whatIfPlan.monthsToClear === 1 ? "" : "s"} sooner, save{" "}
+                  {fmt(Math.max(0, plan.totalInterest - whatIfPlan.totalInterest))} in interest.
+                </p>
+              )}
+              {whatIfPlan && plan.monthsToClear === Infinity && whatIfPlan.monthsToClear !== Infinity && (
+                <p className="text-sm mt-2 text-emerald-300">
+                  That extra makes you debt-free in {whatIfPlan.monthsToClear} months — right now you never get there.
+                </p>
+              )}
+            </div>
+            <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-3">
+              <p className="text-xs uppercase tracking-wider text-slate-500 mb-1">Balance over time</p>
+              {plan.monthsToClear === Infinity ? (
+                <p className="text-sm text-slate-500 italic mt-2">
+                  Payments don't cover interest — balance never reaches zero. Raise the slider.
+                </p>
+              ) : (
+                <PayoffChart timeline={(whatIfPlan ?? plan).timeline} />
+              )}
+            </div>
+          </div>
+        )}
 
         {debts.length === 0 ? (
           <p className="text-slate-400 italic">No debts logged. Hit "+ Debt" to start planning.</p>
@@ -724,6 +799,17 @@ function CategoryTable({
                     >
                       {e.frequency === "monthly" ? "Monthly" : "Once"}
                     </span>
+                    {onLogPayment && e.dueDay != null && e.amount > 0 && daysUntilDue(e.dueDay) <= 7 && (
+                      <span
+                        className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border ${
+                          daysUntilDue(e.dueDay) === 0
+                            ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
+                            : "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                        }`}
+                      >
+                        {daysUntilDue(e.dueDay) === 0 ? "Due today" : `Due in ${daysUntilDue(e.dueDay)}d`}
+                      </span>
+                    )}
                   </p>
                   {e.note && <p className="text-xs text-slate-500 truncate">{e.note}</p>}
                   {onLogPayment && (!!e.paidSoFar || !!e.chargedSoFar) && (
@@ -859,14 +945,16 @@ function EntryModal({
 }: {
   type: EntryType;
   onClose: () => void;
-  onSubmit: (p: { type: EntryType; label: string; amount: number; frequency: "once" | "monthly"; apr?: number; minPayment?: number; note?: string }) => void;
+  onSubmit: (p: { type: EntryType; label: string; amount: number; frequency: "once" | "monthly"; apr?: number; minPayment?: number; dueDay?: number; note?: string }) => void;
   busy: boolean;
 }) {
+  useEscapeClose(onClose);
   const [label, setLabel] = useState("");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [apr, setApr] = useState("");
   const [minPayment, setMinPayment] = useState("");
+  const [dueDay, setDueDay] = useState("");
   const [frequency, setFrequency] = useState<"once" | "monthly">(type === "debt" ? "once" : "monthly");
 
   const titles: Record<EntryType, string> = {
@@ -887,6 +975,7 @@ function EntryModal({
     if (!label.trim() || isNaN(n) || n <= 0) return;
     const aprN = parseFloat(apr);
     const minN = parseFloat(minPayment);
+    const dueN = parseInt(dueDay);
     onSubmit({
       type,
       label: label.trim(),
@@ -894,6 +983,7 @@ function EntryModal({
       frequency,
       apr: type === "debt" && !isNaN(aprN) && aprN >= 0 ? aprN : undefined,
       minPayment: type === "debt" && !isNaN(minN) && minN > 0 ? minN : undefined,
+      dueDay: type === "debt" && !isNaN(dueN) && dueN >= 1 && dueN <= 31 ? dueN : undefined,
       note: note.trim() || undefined,
     });
   }
@@ -976,8 +1066,18 @@ function EntryModal({
                 onChange={(e) => setMinPayment(e.target.value)}
                 className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-amber-500 outline-none"
               />
+              <input
+                type="number"
+                step="1"
+                min="1"
+                max="31"
+                placeholder="Due day (1–31)"
+                value={dueDay}
+                onChange={(e) => setDueDay(e.target.value)}
+                className="col-span-2 w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-amber-500 outline-none"
+              />
               <p className="col-span-2 text-xs text-slate-500">
-                Add the interest rate and required minimum so the payoff plan is accurate.
+                APR + minimum make the payoff plan accurate; due day shows a reminder before the payment date.
               </p>
             </div>
           )}
@@ -1013,6 +1113,7 @@ function PaySourceModal({
   onClose: () => void;
   onChoose: (fromBalance: boolean) => void;
 }) {
+  useEscapeClose(onClose);
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm grid place-items-center z-50 p-4" onClick={onClose}>
       <div
@@ -1066,6 +1167,7 @@ function DebtPaymentModal({
   onLogPayment: (amount: number, kind: "payment" | "charge", fromBalance: boolean, note?: string) => void;
   onUndo: (paymentId: string) => void;
 }) {
+  useEscapeClose(onClose);
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [kind, setKind] = useState<"payment" | "charge">("payment");
@@ -1217,6 +1319,98 @@ function DebtPaymentModal({
 }
 
 /* ---------- helpers ---------- */
+
+type SimDebt = Entry & { originalAmount?: number; paidSoFar?: number; chargedSoFar?: number };
+
+// Amortization simulation: minimums on every debt, extra rolls into the
+// target debt, freed minimums snowball forward, interest accrues monthly.
+function simulatePayoff(debts: SimDebt[], strategy: "avalanche" | "snowball", extraPerMonth: number) {
+  const MAX_MONTHS = 600;
+  const order = [...debts].filter((d) => d.amount > 0);
+  if (strategy === "avalanche")
+    order.sort((a, b) => (b.apr ?? 0) - (a.apr ?? 0) || b.amount - a.amount);
+  else order.sort((a, b) => a.amount - b.amount);
+
+  const sim = order.map((d) => ({
+    id: d.id,
+    balance: d.amount,
+    apr: d.apr ?? 0,
+    min: d.minPayment ?? 0,
+    eta: Infinity as number,
+    interest: 0,
+  }));
+  const totalMin = sim.reduce((s, d) => s + d.min, 0);
+  const timeline: number[] = [sim.reduce((s, d) => s + d.balance, 0)];
+  let totalInterest = 0;
+  let month = 0;
+
+  while (sim.some((d) => d.balance > 0.005) && month < MAX_MONTHS) {
+    month++;
+    let extra =
+      extraPerMonth + totalMin - sim.filter((d) => d.balance > 0.005).reduce((s, d) => s + d.min, 0);
+    for (const d of sim) {
+      if (d.balance <= 0.005) continue;
+      const i = (d.balance * d.apr) / 1200;
+      d.balance += i;
+      d.interest += i;
+      totalInterest += i;
+    }
+    for (const d of sim) {
+      if (d.balance <= 0.005) continue;
+      const pay = Math.min(d.min, d.balance);
+      d.balance -= pay;
+      if (d.balance <= 0.005 && d.eta === Infinity) d.eta = month;
+    }
+    for (const d of sim) {
+      if (extra <= 0) break;
+      if (d.balance <= 0.005) continue;
+      const pay = Math.min(extra, d.balance);
+      d.balance -= pay;
+      extra -= pay;
+      if (d.balance <= 0.005 && d.eta === Infinity) d.eta = month;
+    }
+    timeline.push(sim.reduce((s, d) => s + d.balance, 0));
+    if (extraPerMonth + totalMin <= 0) break; // nothing being paid at all
+  }
+
+  const done = sim.every((d) => d.balance <= 0.005);
+  const byId = new Map(sim.map((d) => [d.id, d]));
+  return {
+    order: order.map((d) => {
+      const s = byId.get(d.id)!;
+      return { ...d, months: s.eta, eta: s.eta, interest: s.interest };
+    }),
+    monthsToClear:
+      done && month > 0
+        ? Math.max(...sim.map((d) => (d.eta === Infinity ? 0 : d.eta)), 0) || Infinity
+        : Infinity,
+    totalInterest: done ? totalInterest : Infinity,
+    timeline,
+  };
+}
+
+function PayoffChart({ timeline }: { timeline: number[] }) {
+  if (timeline.length < 2) return null;
+  const W = 600;
+  const H = 120;
+  const max = Math.max(...timeline, 1);
+  const pts = timeline
+    .map((v, i) => `${((i / (timeline.length - 1)) * W).toFixed(1)},${(H - (v / max) * (H - 8) - 4).toFixed(1)}`)
+    .join(" ");
+  const area = `0,${H} ${pts} ${W},${H}`;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-28" preserveAspectRatio="none" aria-label="Debt balance over time">
+      <defs>
+        <linearGradient id="payoffFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.35" />
+          <stop offset="100%" stopColor="#f59e0b" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <polygon points={area} fill="url(#payoffFill)" />
+      <polyline points={pts} fill="none" stroke="#f59e0b" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
 
 function monthLabel(monthsFromNow: number) {
   const d = new Date();
