@@ -15,3 +15,5 @@ ios/App/App.xcodeproj/xcuserdata
 ios/App/App.xcodeproj/project.xcworkspace/xcuserdata
 DerivedData/
 *.xcuserstate
+.vercel
+.env*
