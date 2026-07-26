@@ -20,7 +20,7 @@ model Entry {
   id        String    @id @default(cuid())
   userId    String
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type      String    // "income" | "expense" | "debt"
+  type      String    // "income" | "expense" (bills) | "purchase" | "debt"
   label     String
   amount    Float
   frequency String    @default("once") // "once" | "monthly"

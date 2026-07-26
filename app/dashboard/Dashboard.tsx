@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { signOut } from "next-auth/react";
 
-type EntryType = "income" | "expense" | "debt";
+type EntryType = "income" | "expense" | "purchase" | "debt";
 
 type Entry = {
   id: string;
@@ -187,6 +187,7 @@ export default function Dashboard({
 
   const income = useMemo(() => entries.filter((e) => e.type === "income"), [entries]);
   const expenses = useMemo(() => entries.filter((e) => e.type === "expense"), [entries]);
+  const purchases = useMemo(() => entries.filter((e) => e.type === "purchase"), [entries]);
   const debts = useMemo(() => {
     return entries
       .filter((e) => e.type === "debt")
@@ -242,6 +243,10 @@ export default function Dashboard({
       const billsUnpaid = billsDue - billsPaid;
       const spentFromBalance = sumBy(exp, (e) => settled(e) && fromBalance(e));
 
+      // Purchases are already-spent money — they hit the balance the month
+      // they're logged, with no paid/unpaid state to track.
+      const purchaseSpend = sumBy(purchases.filter((e) => bornIn(e) === month));
+
       const debtPaid = debts.reduce(
         (s, d) =>
           s +
@@ -257,7 +262,7 @@ export default function Dashboard({
       );
 
       const carryIn = carry;
-      const closing = carryIn + receivedIncome - spentFromBalance - debtPaid;
+      const closing = carryIn + receivedIncome - spentFromBalance - purchaseSpend - debtPaid;
       carry = closing;
       return {
         month,
@@ -268,13 +273,14 @@ export default function Dashboard({
         billsPaid,
         billsUnpaid,
         spentFromBalance,
+        purchaseSpend,
         debtPaid,
         closing,
         // What's genuinely free once this month's remaining bills are covered.
         available: closing - billsUnpaid,
       };
     });
-  }, [income, expenses, debts, startMonth, currentMonth]);
+  }, [income, expenses, purchases, debts, startMonth, currentMonth]);
 
   const monthRow = useMemo(
     () => ledger.find((r) => r.month === selectedMonth) ?? ledger[ledger.length - 1],
@@ -285,6 +291,7 @@ export default function Dashboard({
   const monthlyIncome = monthRow?.receivedIncome ?? 0;
   const totalIncome = monthRow?.receivedIncome ?? 0;
   const totalExpense = monthRow?.billsDue ?? 0;
+  const totalPurchases = monthRow?.purchaseSpend ?? 0;
   const dti = monthlyIncome > 0 ? totalDebt / (monthlyIncome * 12) : 0;
   const monthlyToDebt = Math.max(0, monthlySurplus * (payoutPct / 100));
 
@@ -395,7 +402,7 @@ export default function Dashboard({
       </header>
 
       {/* Summary cards */}
-      <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <section className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <StatCard
           label="Balance"
           value={fmt(balance)}
@@ -407,7 +414,7 @@ export default function Dashboard({
           }
         />
         <StatCard
-          label="Expenses"
+          label="Bills"
           value={fmt(totalExpense)}
           accent="rose"
           sub={
@@ -417,6 +424,12 @@ export default function Dashboard({
               ? "All bills paid"
               : undefined
           }
+        />
+        <StatCard
+          label="Purchases"
+          value={fmt(totalPurchases)}
+          accent="violet"
+          sub="Spent this month"
         />
         <StatCard label="Debt" value={fmt(totalDebt)} accent="amber" />
         <StatCard
@@ -447,6 +460,8 @@ export default function Dashboard({
             <LedgerBit label="Income received" value={monthRow.receivedIncome} tone="emerald" />
             <span className="text-slate-600">−</span>
             <LedgerBit label="Bills paid" value={monthRow.spentFromBalance} tone="rose" />
+            <span className="text-slate-600">−</span>
+            <LedgerBit label="Purchases" value={monthRow.purchaseSpend} tone="violet" />
             <span className="text-slate-600">−</span>
             <LedgerBit label="Debt paid" value={monthRow.debtPaid} tone="amber" />
             <span className="text-slate-600">=</span>
@@ -481,8 +496,8 @@ export default function Dashboard({
         </section>
       )}
 
-      {/* Three category tables */}
-      <section className="grid lg:grid-cols-3 gap-6">
+      {/* Category tables */}
+      <section className="grid md:grid-cols-2 xl:grid-cols-4 gap-6">
         <CategoryTable
           title="Income"
           color="emerald"
@@ -496,7 +511,7 @@ export default function Dashboard({
           paidLabels={{ header: "Got it", yes: "✓ Received", no: "Mark received" }}
         />
         <CategoryTable
-          title="Expenses"
+          title="Bills"
           color="rose"
           rows={expenses}
           total={totalExpense}
@@ -505,6 +520,14 @@ export default function Dashboard({
           selectedMonth={selectedMonth}
           onTogglePaid={togglePaid}
           payBusy={payBusy}
+        />
+        <CategoryTable
+          title="Purchases"
+          color="violet"
+          rows={purchases.filter((e) => monthKey(new Date(e.createdAt)) === selectedMonth)}
+          total={totalPurchases}
+          onAdd={() => setModalType("purchase")}
+          onDelete={deleteEntry}
         />
         <CategoryTable
           title="Debt"
@@ -537,11 +560,18 @@ export default function Dashboard({
           <tbody className="divide-y divide-slate-800">
             <SumRow label="Income" count={income.length} total={totalIncome} pctOfIncome={1} color="emerald" />
             <SumRow
-              label="Expenses"
+              label="Bills"
               count={expenses.length}
               total={-totalExpense}
               pctOfIncome={totalIncome ? -totalExpense / totalIncome : 0}
               color="rose"
+            />
+            <SumRow
+              label="Purchases"
+              count={purchases.filter((e) => monthKey(new Date(e.createdAt)) === selectedMonth).length}
+              total={-totalPurchases}
+              pctOfIncome={totalIncome ? -totalPurchases / totalIncome : 0}
+              color="violet"
             />
             <SumRow
               label="Debt"
@@ -561,7 +591,7 @@ export default function Dashboard({
                 {totalIncome ? pct(balance / totalIncome) : "—"}
               </td>
               <td className="px-5 py-3 hidden md:table-cell text-slate-500">
-                Income − Expenses − Debt payments from balance
+                Income − Bills − Purchases − Debt payments from balance
               </td>
             </tr>
           </tbody>
@@ -834,7 +864,7 @@ function CategoryTable({
   paidLabels,
 }: {
   title: string;
-  color: "emerald" | "rose" | "amber";
+  color: "emerald" | "rose" | "amber" | "violet";
   rows: Entry[];
   total: number;
   onAdd: () => void;
@@ -851,6 +881,7 @@ function CategoryTable({
     emerald: { bar: "bg-emerald-500", text: "text-emerald-400", chip: "bg-emerald-500/15 border-emerald-500/30", btn: "bg-emerald-500 hover:bg-emerald-400 text-slate-950" },
     rose: { bar: "bg-rose-500", text: "text-rose-400", chip: "bg-rose-500/15 border-rose-500/30", btn: "bg-rose-500 hover:bg-rose-400 text-white" },
     amber: { bar: "bg-amber-500", text: "text-amber-400", chip: "bg-amber-500/15 border-amber-500/30", btn: "bg-amber-500 hover:bg-amber-400 text-slate-950" },
+    violet: { bar: "bg-violet-500", text: "text-violet-400", chip: "bg-violet-500/15 border-violet-500/30", btn: "bg-violet-500 hover:bg-violet-400 text-white" },
   }[color];
   return (
     <div className="bg-slate-900/60 border border-slate-800 rounded-2xl overflow-hidden flex flex-col">
@@ -890,15 +921,21 @@ function CategoryTable({
                 <td className="px-4 py-2.5">
                   <p className="font-medium truncate flex items-center gap-2">
                     {e.label}
-                    <span
-                      className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${
-                        e.frequency === "monthly"
-                          ? "bg-sky-500/20 text-sky-300 border border-sky-500/30"
-                          : "bg-slate-700/50 text-slate-400 border border-slate-600/40"
-                      }`}
-                    >
-                      {e.frequency === "monthly" ? "Monthly" : "Once"}
-                    </span>
+                    {e.type === "purchase" ? (
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">
+                        {new Date(e.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                      </span>
+                    ) : (
+                      <span
+                        className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                          e.frequency === "monthly"
+                            ? "bg-sky-500/20 text-sky-300 border border-sky-500/30"
+                            : "bg-slate-700/50 text-slate-400 border border-slate-600/40"
+                        }`}
+                      >
+                        {e.frequency === "monthly" ? "Monthly" : "Once"}
+                      </span>
+                    )}
                     {onLogPayment && e.dueDay != null && e.amount > 0 && daysUntilDue(e.dueDay) <= 7 && (
                       <span
                         className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border ${
@@ -983,7 +1020,7 @@ function StatCard({
 }: {
   label: string;
   value: string;
-  accent: "emerald" | "rose" | "amber" | "sky";
+  accent: "emerald" | "rose" | "amber" | "sky" | "violet";
   sub?: string;
 }) {
   const colors: Record<string, string> = {
@@ -991,6 +1028,7 @@ function StatCard({
     rose: "from-rose-500/20 to-rose-500/0 border-rose-500/30",
     amber: "from-amber-500/20 to-amber-500/0 border-amber-500/30",
     sky: "from-sky-500/20 to-sky-500/0 border-sky-500/30",
+    violet: "from-violet-500/20 to-violet-500/0 border-violet-500/30",
   };
   return (
     <div className={`bg-gradient-to-br ${colors[accent]} border rounded-2xl p-4`}>
@@ -1009,7 +1047,7 @@ function LedgerBit({
 }: {
   label: string;
   value: number;
-  tone: "slate" | "emerald" | "rose" | "amber" | "sky";
+  tone: "slate" | "emerald" | "rose" | "amber" | "sky" | "violet";
   strong?: boolean;
 }) {
   const colors = {
@@ -1018,6 +1056,7 @@ function LedgerBit({
     rose: "text-rose-300 border-rose-500/30",
     amber: "text-amber-300 border-amber-500/30",
     sky: "text-sky-300 border-sky-500/40",
+    violet: "text-violet-300 border-violet-500/30",
   }[tone];
   return (
     <span className={`px-3 py-1.5 rounded-xl bg-slate-900/70 border ${colors} ${strong ? "font-bold" : ""}`}>
@@ -1048,10 +1087,15 @@ function SumRow({
   count: number;
   total: number;
   pctOfIncome: number;
-  color: "emerald" | "rose" | "amber";
+  color: "emerald" | "rose" | "amber" | "violet";
   note?: string;
 }) {
-  const map = { emerald: "text-emerald-400", rose: "text-rose-400", amber: "text-amber-400" };
+  const map = {
+    emerald: "text-emerald-400",
+    rose: "text-rose-400",
+    amber: "text-amber-400",
+    violet: "text-violet-400",
+  };
   return (
     <tr className="hover:bg-slate-800/30">
       <td className="px-5 py-3 font-medium">{label}</td>
@@ -1081,17 +1125,21 @@ function EntryModal({
   const [apr, setApr] = useState("");
   const [minPayment, setMinPayment] = useState("");
   const [dueDay, setDueDay] = useState("");
-  const [frequency, setFrequency] = useState<"once" | "monthly">(type === "debt" ? "once" : "monthly");
+  const [frequency, setFrequency] = useState<"once" | "monthly">(
+    type === "debt" || type === "purchase" ? "once" : "monthly"
+  );
 
   const titles: Record<EntryType, string> = {
     income: "Add income",
-    expense: "Add expense",
+    expense: "Add bill",
+    purchase: "Add purchase",
     debt: "Add debt",
   };
 
   const hints: Record<EntryType, { once: string; monthly: string }> = {
     income: { once: "Bonus, gift, refund — counted once", monthly: "Salary, paycheck — repeats every month" },
-    expense: { once: "Single purchase — counted once", monthly: "Rent, subscriptions — repeats every month" },
+    expense: { once: "One-off bill — counted once", monthly: "Rent, subscriptions — repeats every month" },
+    purchase: { once: "Something you bought — comes straight out of your balance", monthly: "" },
     debt: { once: "Outstanding balance to pay off", monthly: "Recurring debt payment / installment" },
   };
 
@@ -1128,6 +1176,9 @@ function EntryModal({
           <button onClick={onClose} className="text-slate-500 hover:text-white">✕</button>
         </div>
         <form onSubmit={submit} className="space-y-3">
+          {type === "purchase" ? (
+            <p className="text-xs text-slate-500">{hints.purchase.once}</p>
+          ) : (
           <div>
             <label className="block text-xs uppercase tracking-wider text-slate-400 mb-2">Frequency</label>
             <div className="grid grid-cols-2 gap-2">
@@ -1156,9 +1207,14 @@ function EntryModal({
             </div>
             <p className="text-xs text-slate-500 mt-2">{hints[type][frequency]}</p>
           </div>
+          )}
           <input
             autoFocus
-            placeholder="Label (e.g. Salary, Rent, Credit card)"
+            placeholder={
+              type === "purchase"
+                ? "What did you buy? (e.g. Groceries)"
+                : "Label (e.g. Salary, Rent, Credit card)"
+            }
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-emerald-500 outline-none"

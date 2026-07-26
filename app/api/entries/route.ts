@@ -5,7 +5,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 const createSchema = z.object({
-  type: z.enum(["income", "expense", "debt"]),
+  type: z.enum(["income", "expense", "purchase", "debt"]),
   label: z.string().min(1).max(120),
   amount: z.number().finite(),
   frequency: z.enum(["once", "monthly"]).default("once"),
