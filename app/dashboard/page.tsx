@@ -22,6 +22,7 @@ export default async function DashboardPage() {
         debtPayments: e.debtPayments.map((p) => ({
           id: p.id,
           amount: p.amount,
+          kind: p.kind,
           note: p.note,
           paidAt: p.paidAt.toISOString(),
         })),

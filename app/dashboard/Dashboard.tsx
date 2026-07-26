@@ -13,9 +13,10 @@ type Entry = {
   note: string | null;
   createdAt: string;
   payments: { month: string; fromBalance: boolean }[];
-  debtPayments: { id: string; amount: number; note: string | null; paidAt: string }[];
+  debtPayments: { id: string; amount: number; kind: string; note: string | null; paidAt: string }[];
   originalAmount?: number;
   paidSoFar?: number;
+  chargedSoFar?: number;
 };
 
 const fmt = (n: number) =>
@@ -126,12 +127,12 @@ export default function Dashboard({
   const [debtModal, setDebtModal] = useState<{ id: string; label: string } | null>(null);
   const [debtPayBusy, setDebtPayBusy] = useState(false);
 
-  async function logDebtPayment(entryId: string, amount: number, note?: string) {
+  async function logDebtPayment(entryId: string, amount: number, kind: "payment" | "charge", note?: string) {
     setDebtPayBusy(true);
     const r = await fetch(`/api/entries/${entryId}/debt-payments`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ amount, note }),
+      body: JSON.stringify({ amount, kind, note }),
     });
     setDebtPayBusy(false);
     if (!r.ok) return alert("Failed to log payment");
@@ -157,8 +158,21 @@ export default function Dashboard({
     return entries
       .filter((e) => e.type === "debt")
       .map((e) => {
-        const paidSoFar = e.debtPayments.reduce((s, p) => s + p.amount, 0);
-        return { ...e, originalAmount: e.amount, paidSoFar, amount: Math.max(0, e.amount - paidSoFar) };
+        const paidSoFar = e.debtPayments.reduce(
+          (s, p) => s + (p.kind === "charge" ? 0 : p.amount),
+          0
+        );
+        const chargedSoFar = e.debtPayments.reduce(
+          (s, p) => s + (p.kind === "charge" ? p.amount : 0),
+          0
+        );
+        return {
+          ...e,
+          originalAmount: e.amount,
+          paidSoFar,
+          chargedSoFar,
+          amount: Math.max(0, e.amount + chargedSoFar - paidSoFar),
+        };
       });
   }, [entries]);
 
@@ -530,7 +544,7 @@ export default function Dashboard({
             history={entry.debtPayments}
             busy={debtPayBusy}
             onClose={() => setDebtModal(null)}
-            onLogPayment={(amount, note) => logDebtPayment(debtModal.id, amount, note)}
+            onLogPayment={(amount, kind, note) => logDebtPayment(debtModal.id, amount, kind, note)}
             onUndo={(paymentId) => undoDebtPayment(debtModal.id, paymentId)}
           />
         );
@@ -620,9 +634,10 @@ function CategoryTable({
                     </span>
                   </p>
                   {e.note && <p className="text-xs text-slate-500 truncate">{e.note}</p>}
-                  {onLogPayment && !!e.paidSoFar && (
+                  {onLogPayment && (!!e.paidSoFar || !!e.chargedSoFar) && (
                     <p className="text-xs text-slate-500 truncate">
-                      {fmt(e.paidSoFar)} paid of {fmt(e.originalAmount ?? e.amount)}
+                      {fmt(e.paidSoFar ?? 0)} paid
+                      {e.chargedSoFar ? ` · ${fmt(e.chargedSoFar)} used` : ""} · started {fmt(e.originalAmount ?? e.amount)}
                     </p>
                   )}
                 </td>
@@ -916,20 +931,21 @@ function DebtPaymentModal({
   label: string;
   remaining: number;
   originalAmount: number;
-  history: { id: string; amount: number; note: string | null; paidAt: string }[];
+  history: { id: string; amount: number; kind: string; note: string | null; paidAt: string }[];
   busy: boolean;
   onClose: () => void;
-  onLogPayment: (amount: number, note?: string) => void;
+  onLogPayment: (amount: number, kind: "payment" | "charge", note?: string) => void;
   onUndo: (paymentId: string) => void;
 }) {
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
+  const [kind, setKind] = useState<"payment" | "charge">("payment");
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
     const n = parseFloat(amount);
     if (isNaN(n) || n <= 0) return;
-    onLogPayment(n, note.trim() || undefined);
+    onLogPayment(n, kind, note.trim() || undefined);
     setAmount("");
     setNote("");
   }
@@ -945,16 +961,45 @@ function DebtPaymentModal({
           <button onClick={onClose} className="text-slate-500 hover:text-white">✕</button>
         </div>
         <p className="text-slate-400 text-sm mb-4">
-          {fmt(remaining)} remaining of {fmt(originalAmount)}
+          {fmt(remaining)} remaining · started at {fmt(originalAmount)}
         </p>
 
         <form onSubmit={submit} className="space-y-2 mb-5">
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setKind("payment")}
+              className={`px-3 py-2.5 rounded-xl border text-sm font-medium transition ${
+                kind === "payment"
+                  ? "bg-emerald-500/20 border-emerald-500 text-emerald-200"
+                  : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+              }`}
+            >
+              Payment
+            </button>
+            <button
+              type="button"
+              onClick={() => setKind("charge")}
+              className={`px-3 py-2.5 rounded-xl border text-sm font-medium transition ${
+                kind === "charge"
+                  ? "bg-rose-500/20 border-rose-500 text-rose-200"
+                  : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+              }`}
+            >
+              Card usage
+            </button>
+          </div>
+          <p className="text-xs text-slate-500">
+            {kind === "payment"
+              ? "Money you paid toward this debt — reduces the balance."
+              : "New spending on this card — increases the balance."}
+          </p>
           <input
             autoFocus
             type="number"
             step="0.01"
             min="0.01"
-            placeholder="Payment amount"
+            placeholder={kind === "payment" ? "Payment amount" : "Amount spent"}
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-amber-500 outline-none"
@@ -969,7 +1014,7 @@ function DebtPaymentModal({
             disabled={busy}
             className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold disabled:opacity-50"
           >
-            {busy ? "Logging..." : "Log payment"}
+            {busy ? "Logging..." : kind === "payment" ? "Log payment" : "Log card usage"}
           </button>
         </form>
 
@@ -984,7 +1029,12 @@ function DebtPaymentModal({
                 className="flex items-center justify-between gap-2 bg-slate-800/60 border border-slate-700 rounded-lg px-3 py-2"
               >
                 <div className="min-w-0">
-                  <p className="font-medium tabular-nums text-emerald-300">{fmt(p.amount)}</p>
+                  <p className={`font-medium tabular-nums ${p.kind === "charge" ? "text-rose-300" : "text-emerald-300"}`}>
+                    {p.kind === "charge" ? `+${fmt(p.amount)}` : `−${fmt(p.amount)}`}
+                    <span className="ml-2 text-[10px] uppercase tracking-wider text-slate-500">
+                      {p.kind === "charge" ? "Usage" : "Payment"}
+                    </span>
+                  </p>
                   <p className="text-xs text-slate-500 truncate">
                     {new Date(p.paidAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
                     {p.note ? ` · ${p.note}` : ""}

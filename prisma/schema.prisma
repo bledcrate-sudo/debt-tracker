@@ -49,6 +49,7 @@ model DebtPayment {
   entryId String
   entry   Entry    @relation(fields: [entryId], references: [id], onDelete: Cascade)
   amount  Float
+  kind    String   @default("payment") // "payment" | "charge"
   note    String?
   paidAt  DateTime @default(now())
 
