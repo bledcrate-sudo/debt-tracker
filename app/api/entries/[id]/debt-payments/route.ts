@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 const createSchema = z.object({
   amount: z.number().finite().positive(),
   kind: z.enum(["payment", "charge"]).default("payment"),
+  fromBalance: z.boolean().default(true),
   note: z.string().max(300).optional().nullable(),
 });
 
@@ -27,7 +28,13 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   try {
     const data = createSchema.parse(await req.json());
     const payment = await prisma.debtPayment.create({
-      data: { entryId: entry.id, amount: data.amount, kind: data.kind, note: data.note ?? null },
+      data: {
+        entryId: entry.id,
+        amount: data.amount,
+        kind: data.kind,
+        fromBalance: data.kind === "payment" ? data.fromBalance : false,
+        note: data.note ?? null,
+      },
     });
     return NextResponse.json(payment);
   } catch (e: any) {

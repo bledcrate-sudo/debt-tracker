@@ -24,6 +24,8 @@ model Entry {
   label     String
   amount    Float
   frequency String    @default("once") // "once" | "monthly"
+  apr        Float?   // annual interest rate %, debts only
+  minPayment Float?   // required minimum monthly payment, debts only
   note      String?
   createdAt DateTime  @default(now())
   payments  Payment[]
@@ -48,9 +50,10 @@ model DebtPayment {
   id      String   @id @default(cuid())
   entryId String
   entry   Entry    @relation(fields: [entryId], references: [id], onDelete: Cascade)
-  amount  Float
-  kind    String   @default("payment") // "payment" | "charge"
-  note    String?
+  amount      Float
+  kind        String  @default("payment") // "payment" | "charge"
+  fromBalance Boolean @default(true) // payments only: whether it came out of tracked balance
+  note        String?
   paidAt  DateTime @default(now())
 
   @@index([entryId])

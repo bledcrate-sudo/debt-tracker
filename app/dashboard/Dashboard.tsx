@@ -10,10 +10,12 @@ type Entry = {
   label: string;
   amount: number;
   frequency: string;
+  apr?: number | null;
+  minPayment?: number | null;
   note: string | null;
   createdAt: string;
   payments: { month: string; fromBalance: boolean }[];
-  debtPayments: { id: string; amount: number; kind: string; note: string | null; paidAt: string }[];
+  debtPayments: { id: string; amount: number; kind: string; fromBalance: boolean; note: string | null; paidAt: string }[];
   originalAmount?: number;
   paidSoFar?: number;
   chargedSoFar?: number;
@@ -127,12 +129,18 @@ export default function Dashboard({
   const [debtModal, setDebtModal] = useState<{ id: string; label: string } | null>(null);
   const [debtPayBusy, setDebtPayBusy] = useState(false);
 
-  async function logDebtPayment(entryId: string, amount: number, kind: "payment" | "charge", note?: string) {
+  async function logDebtPayment(
+    entryId: string,
+    amount: number,
+    kind: "payment" | "charge",
+    fromBalance: boolean,
+    note?: string
+  ) {
     setDebtPayBusy(true);
     const r = await fetch(`/api/entries/${entryId}/debt-payments`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ amount, kind, note }),
+      body: JSON.stringify({ amount, kind, fromBalance, note }),
     });
     setDebtPayBusy(false);
     if (!r.ok) return alert("Failed to log payment");
@@ -197,25 +205,90 @@ export default function Dashboard({
   const adjustedMonthlyExpense = monthlyExpense - offBalancePaid;
   const monthlySurplus = monthlyIncome - adjustedMonthlyExpense;
   const surplus = totalIncome - adjustedTotalExpense;
-  const balance = surplus - totalDebt;
+  // Debt itself doesn't reduce balance — only debt payments made from balance do.
+  const debtPaidFromBalance = useMemo(
+    () =>
+      debts.reduce(
+        (s, d) =>
+          s +
+          d.debtPayments.reduce(
+            (ps, p) => ps + (p.kind === "payment" && p.fromBalance ? p.amount : 0),
+            0
+          ),
+        0
+      ),
+    [debts]
+  );
+  const balance = surplus - debtPaidFromBalance;
   const dti = monthlyIncome > 0 ? totalDebt / (monthlyIncome * 12) : 0;
   const monthlyToDebt = Math.max(0, monthlySurplus * (payoutPct / 100));
-  const monthsToClear = monthlyToDebt > 0 ? Math.ceil(totalDebt / monthlyToDebt) : Infinity;
 
-  const payoffOrder = useMemo(() => {
-    const arr = [...debts];
-    if (strategy === "avalanche") arr.sort((a, b) => b.amount - a.amount);
-    else arr.sort((a, b) => a.amount - b.amount);
-    let remaining = monthlyToDebt;
-    let monthCursor = 0;
-    return arr.map((d) => {
-      const months = remaining > 0 ? Math.ceil(d.amount / remaining) : Infinity;
-      monthCursor += months;
-      return { ...d, months, eta: monthCursor };
-    });
+  // Amortization simulation: minimums on every debt, extra rolls into the
+  // target debt, freed minimums snowball forward, interest accrues monthly.
+  const plan = useMemo(() => {
+    const MAX_MONTHS = 600;
+    const order = [...debts].filter((d) => d.amount > 0);
+    if (strategy === "avalanche")
+      order.sort((a, b) => (b.apr ?? 0) - (a.apr ?? 0) || b.amount - a.amount);
+    else order.sort((a, b) => a.amount - b.amount);
+
+    const sim = order.map((d) => ({
+      id: d.id,
+      balance: d.amount,
+      apr: d.apr ?? 0,
+      min: d.minPayment ?? 0,
+      eta: Infinity as number,
+      interest: 0,
+    }));
+    const totalMin = sim.reduce((s, d) => s + d.min, 0);
+    let totalInterest = 0;
+    let month = 0;
+
+    while (sim.some((d) => d.balance > 0.005) && month < MAX_MONTHS) {
+      month++;
+      let extra = monthlyToDebt + totalMin - sim.filter((d) => d.balance > 0.005).reduce((s, d) => s + d.min, 0);
+      // interest accrual
+      for (const d of sim) {
+        if (d.balance <= 0.005) continue;
+        const i = (d.balance * d.apr) / 1200;
+        d.balance += i;
+        d.interest += i;
+        totalInterest += i;
+      }
+      // minimum payments
+      for (const d of sim) {
+        if (d.balance <= 0.005) continue;
+        const pay = Math.min(d.min, d.balance);
+        d.balance -= pay;
+        if (d.balance <= 0.005 && d.eta === Infinity) d.eta = month;
+      }
+      // extra to target in strategy order
+      for (const d of sim) {
+        if (extra <= 0) break;
+        if (d.balance <= 0.005) continue;
+        const pay = Math.min(extra, d.balance);
+        d.balance -= pay;
+        extra -= pay;
+        if (d.balance <= 0.005 && d.eta === Infinity) d.eta = month;
+      }
+      if (monthlyToDebt + totalMin <= 0) break; // nothing being paid at all
+    }
+
+    const done = sim.every((d) => d.balance <= 0.005);
+    const byId = new Map(sim.map((d) => [d.id, d]));
+    return {
+      order: order.map((d) => {
+        const s = byId.get(d.id)!;
+        return { ...d, months: s.eta, eta: s.eta, interest: s.interest };
+      }),
+      monthsToClear: done && month > 0 ? Math.max(...sim.map((d) => (d.eta === Infinity ? 0 : d.eta)), 0) || Infinity : Infinity,
+      totalInterest: done ? totalInterest : Infinity,
+    };
   }, [debts, strategy, monthlyToDebt]);
+  const payoffOrder = plan.order;
+  const monthsToClear = debts.length === 0 ? 0 : plan.monthsToClear;
 
-  async function addEntry(payload: { type: EntryType; label: string; amount: number; frequency: "once" | "monthly"; note?: string }) {
+  async function addEntry(payload: { type: EntryType; label: string; amount: number; frequency: "once" | "monthly"; apr?: number; minPayment?: number; note?: string }) {
     setBusy(true);
     const r = await fetch("/api/entries", {
       method: "POST",
@@ -289,14 +362,13 @@ export default function Dashboard({
       </header>
 
       {/* Summary cards */}
-      <section className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard
           label="Balance"
           value={fmt(balance)}
           accent={balance >= 0 ? "emerald" : "rose"}
           sub={offBalancePaid > 0 ? `${fmt(offBalancePaid)} paid off-balance` : undefined}
         />
-        <StatCard label="Income" value={fmt(totalIncome)} accent="emerald" />
         <StatCard label="Expenses" value={fmt(totalExpense)} accent="rose" />
         <StatCard label="Debt" value={fmt(totalDebt)} accent="amber" />
         <StatCard
@@ -383,7 +455,7 @@ export default function Dashboard({
                 {totalIncome ? pct(balance / totalIncome) : "—"}
               </td>
               <td className="px-5 py-3 hidden md:table-cell text-slate-500">
-                Income − Expenses − Debt
+                Income − Expenses − Debt payments from balance
               </td>
             </tr>
           </tbody>
@@ -426,11 +498,15 @@ export default function Dashboard({
           </div>
         </div>
 
-        <div className="grid sm:grid-cols-3 gap-3 mb-5">
+        <div className="grid sm:grid-cols-4 gap-3 mb-5">
           <MiniStat label="Apply to debt / mo" value={fmt(monthlyToDebt)} />
           <MiniStat
-            label="Months to debt-free"
-            value={monthsToClear === Infinity ? "∞" : `${monthsToClear} mo`}
+            label="Debt-free date"
+            value={monthsToClear === Infinity ? "∞" : monthsToClear === 0 ? "Now" : monthLabel(monthsToClear)}
+          />
+          <MiniStat
+            label="Interest you'll pay"
+            value={plan.totalInterest === Infinity ? "∞" : fmt(plan.totalInterest)}
           />
           <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-3">
             <p className="text-xs uppercase tracking-wider text-slate-500">Surplus % to debt</p>
@@ -459,7 +535,8 @@ export default function Dashboard({
                   <th className="text-left px-4 py-3">#</th>
                   <th className="text-left px-4 py-3">Debt</th>
                   <th className="text-right px-4 py-3">Balance</th>
-                  <th className="text-right px-4 py-3 hidden sm:table-cell">Share</th>
+                  <th className="text-right px-4 py-3 hidden sm:table-cell">APR</th>
+                  <th className="text-right px-4 py-3 hidden lg:table-cell">Interest</th>
                   <th className="text-right px-4 py-3">Months</th>
                   <th className="text-right px-4 py-3 hidden md:table-cell">Cleared by</th>
                 </tr>
@@ -475,10 +552,23 @@ export default function Dashboard({
                           attack first
                         </span>
                       )}
+                      {(d.originalAmount ?? 0) > 0 && (
+                        <div className="mt-1.5 h-1.5 w-full max-w-[160px] bg-slate-800 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-emerald-500 rounded-full"
+                            style={{
+                              width: `${Math.min(100, Math.max(0, (1 - d.amount / Math.max(d.originalAmount ?? d.amount, d.amount)) * 100))}%`,
+                            }}
+                          />
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums text-amber-300">{fmt(d.amount)}</td>
-                    <td className="px-4 py-3 text-right hidden sm:table-cell text-slate-400">
-                      {totalDebt ? pct(d.amount / totalDebt) : "—"}
+                    <td className="px-4 py-3 text-right hidden sm:table-cell text-slate-400 tabular-nums">
+                      {d.apr != null ? `${d.apr}%` : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-right hidden lg:table-cell text-rose-300/80 tabular-nums">
+                      {d.interest > 0 ? fmt(d.interest) : "—"}
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums">
                       {d.months === Infinity ? "∞" : `${d.months} mo`}
@@ -544,7 +634,9 @@ export default function Dashboard({
             history={entry.debtPayments}
             busy={debtPayBusy}
             onClose={() => setDebtModal(null)}
-            onLogPayment={(amount, kind, note) => logDebtPayment(debtModal.id, amount, kind, note)}
+            onLogPayment={(amount, kind, fromBalance, note) =>
+              logDebtPayment(debtModal.id, amount, kind, fromBalance, note)
+            }
             onUndo={(paymentId) => undoDebtPayment(debtModal.id, paymentId)}
           />
         );
@@ -767,12 +859,14 @@ function EntryModal({
 }: {
   type: EntryType;
   onClose: () => void;
-  onSubmit: (p: { type: EntryType; label: string; amount: number; frequency: "once" | "monthly"; note?: string }) => void;
+  onSubmit: (p: { type: EntryType; label: string; amount: number; frequency: "once" | "monthly"; apr?: number; minPayment?: number; note?: string }) => void;
   busy: boolean;
 }) {
   const [label, setLabel] = useState("");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
+  const [apr, setApr] = useState("");
+  const [minPayment, setMinPayment] = useState("");
   const [frequency, setFrequency] = useState<"once" | "monthly">(type === "debt" ? "once" : "monthly");
 
   const titles: Record<EntryType, string> = {
@@ -791,7 +885,17 @@ function EntryModal({
     e.preventDefault();
     const n = parseFloat(amount);
     if (!label.trim() || isNaN(n) || n <= 0) return;
-    onSubmit({ type, label: label.trim(), amount: n, frequency, note: note.trim() || undefined });
+    const aprN = parseFloat(apr);
+    const minN = parseFloat(minPayment);
+    onSubmit({
+      type,
+      label: label.trim(),
+      amount: n,
+      frequency,
+      apr: type === "debt" && !isNaN(aprN) && aprN >= 0 ? aprN : undefined,
+      minPayment: type === "debt" && !isNaN(minN) && minN > 0 ? minN : undefined,
+      note: note.trim() || undefined,
+    });
   }
 
   return (
@@ -852,6 +956,31 @@ function EntryModal({
             onChange={(e) => setAmount(e.target.value)}
             className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-emerald-500 outline-none"
           />
+          {type === "debt" && (
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="APR % (optional)"
+                value={apr}
+                onChange={(e) => setApr(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-amber-500 outline-none"
+              />
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="Min payment / mo"
+                value={minPayment}
+                onChange={(e) => setMinPayment(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-amber-500 outline-none"
+              />
+              <p className="col-span-2 text-xs text-slate-500">
+                Add the interest rate and required minimum so the payoff plan is accurate.
+              </p>
+            </div>
+          )}
           <textarea
             placeholder="Note (optional)"
             value={note}
@@ -931,21 +1060,22 @@ function DebtPaymentModal({
   label: string;
   remaining: number;
   originalAmount: number;
-  history: { id: string; amount: number; kind: string; note: string | null; paidAt: string }[];
+  history: { id: string; amount: number; kind: string; fromBalance: boolean; note: string | null; paidAt: string }[];
   busy: boolean;
   onClose: () => void;
-  onLogPayment: (amount: number, kind: "payment" | "charge", note?: string) => void;
+  onLogPayment: (amount: number, kind: "payment" | "charge", fromBalance: boolean, note?: string) => void;
   onUndo: (paymentId: string) => void;
 }) {
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [kind, setKind] = useState<"payment" | "charge">("payment");
+  const [fromBalance, setFromBalance] = useState(true);
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
     const n = parseFloat(amount);
     if (isNaN(n) || n <= 0) return;
-    onLogPayment(n, kind, note.trim() || undefined);
+    onLogPayment(n, kind, kind === "payment" ? fromBalance : false, note.trim() || undefined);
     setAmount("");
     setNote("");
   }
@@ -991,9 +1121,40 @@ function DebtPaymentModal({
           </div>
           <p className="text-xs text-slate-500">
             {kind === "payment"
-              ? "Money you paid toward this debt — reduces the balance."
-              : "New spending on this card — increases the balance."}
+              ? "Money you paid toward this debt — reduces what you owe."
+              : "New spending on this card — increases what you owe."}
           </p>
+          {kind === "payment" && (
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setFromBalance(true)}
+                className={`px-3 py-2 rounded-xl border text-xs font-medium transition ${
+                  fromBalance
+                    ? "bg-sky-500/20 border-sky-500 text-sky-200"
+                    : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+                }`}
+              >
+                From balance
+              </button>
+              <button
+                type="button"
+                onClick={() => setFromBalance(false)}
+                className={`px-3 py-2 rounded-xl border text-xs font-medium transition ${
+                  !fromBalance
+                    ? "bg-slate-600/40 border-slate-500 text-white"
+                    : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+                }`}
+              >
+                Off balance
+              </button>
+              <p className="col-span-2 text-[11px] text-slate-500">
+                {fromBalance
+                  ? "Paid with tracked money — your Balance goes down."
+                  : "Paid with outside money — Balance unaffected."}
+              </p>
+            </div>
+          )}
           <input
             autoFocus
             type="number"
@@ -1032,7 +1193,7 @@ function DebtPaymentModal({
                   <p className={`font-medium tabular-nums ${p.kind === "charge" ? "text-rose-300" : "text-emerald-300"}`}>
                     {p.kind === "charge" ? `+${fmt(p.amount)}` : `−${fmt(p.amount)}`}
                     <span className="ml-2 text-[10px] uppercase tracking-wider text-slate-500">
-                      {p.kind === "charge" ? "Usage" : "Payment"}
+                      {p.kind === "charge" ? "Usage" : p.fromBalance ? "Payment · from balance" : "Payment · off balance"}
                     </span>
                   </p>
                   <p className="text-xs text-slate-500 truncate">

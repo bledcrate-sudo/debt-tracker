@@ -23,6 +23,7 @@ export default async function DashboardPage() {
           id: p.id,
           amount: p.amount,
           kind: p.kind,
+          fromBalance: p.fromBalance,
           note: p.note,
           paidAt: p.paidAt.toISOString(),
         })),

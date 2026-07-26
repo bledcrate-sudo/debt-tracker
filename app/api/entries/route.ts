@@ -9,6 +9,8 @@ const createSchema = z.object({
   label: z.string().min(1).max(120),
   amount: z.number().finite(),
   frequency: z.enum(["once", "monthly"]).default("once"),
+  apr: z.number().min(0).max(200).optional().nullable(),
+  minPayment: z.number().min(0).optional().nullable(),
   note: z.string().max(500).optional().nullable(),
 });
 
@@ -39,6 +41,8 @@ export async function POST(req: Request) {
         label: data.label,
         amount: Math.abs(data.amount),
         frequency: data.frequency,
+        apr: data.type === "debt" ? data.apr ?? null : null,
+        minPayment: data.type === "debt" ? data.minPayment ?? null : null,
         note: data.note ?? null,
         user: { connect: { id: userId } },
       },
