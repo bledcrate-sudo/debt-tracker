@@ -145,6 +145,12 @@ export default function Dashboard({
     else setPayPrompt({ id: entryId, label, amount });
   }
 
+  // Income has no from/off-balance question — it either landed or it didn't.
+  function toggleReceived(entryId: string, received: boolean) {
+    if (received) unmarkPaid(entryId);
+    else markPaid(entryId, true);
+  }
+
   const [debtModal, setDebtModal] = useState<{ id: string; label: string } | null>(null);
   const [debtPayBusy, setDebtPayBusy] = useState(false);
 
@@ -205,40 +211,80 @@ export default function Dashboard({
 
   const sumBy = (arr: Entry[], pred?: (e: Entry) => boolean) =>
     arr.reduce((s, e) => s + (!pred || pred(e) ? e.amount : 0), 0);
-  const totalIncome = useMemo(() => sumBy(income), [income]);
-  const totalExpense = useMemo(() => sumBy(expenses), [expenses]);
   const totalDebt = useMemo(() => sumBy(debts), [debts]);
-  const monthlyIncome = useMemo(() => sumBy(income, (e) => e.frequency === "monthly"), [income]);
-  const monthlyExpense = useMemo(() => sumBy(expenses, (e) => e.frequency === "monthly"), [expenses]);
-  const oneTimeIncome = totalIncome - monthlyIncome;
-  const oneTimeExpense = totalExpense - monthlyExpense;
-  const offBalancePaid = useMemo(
-    () =>
-      sumBy(expenses, (e) =>
-        e.frequency === "monthly" &&
-        e.payments.some((p) => p.month === selectedMonth && !p.fromBalance)
-      ),
-    [expenses, selectedMonth]
-  );
-  const adjustedTotalExpense = totalExpense - offBalancePaid;
-  const adjustedMonthlyExpense = monthlyExpense - offBalancePaid;
-  const monthlySurplus = monthlyIncome - adjustedMonthlyExpense;
-  const surplus = totalIncome - adjustedTotalExpense;
-  // Debt itself doesn't reduce balance — only debt payments made from balance do.
-  const debtPaidFromBalance = useMemo(
-    () =>
-      debts.reduce(
+
+  // Month-by-month ledger. Each month starts with whatever was left over
+  // from the previous one, so unspent money carries forward instead of
+  // every month resetting to the same static surplus.
+  const ledger = useMemo(() => {
+    const months: string[] = [];
+    for (let m = startMonth; m <= currentMonth; m = shiftMonth(m, 1)) months.push(m);
+
+    const bornIn = (e: Entry) => monthKey(new Date(e.createdAt));
+    const activeIn = (e: Entry, month: string) =>
+      e.frequency === "monthly" ? bornIn(e) <= month : bornIn(e) === month;
+
+    let carry = 0;
+    return months.map((month) => {
+      const inc = income.filter((e) => activeIn(e, month));
+      const exp = expenses.filter((e) => activeIn(e, month));
+      const gotPaid = (e: Entry) => e.payments.some((p) => p.month === month);
+      // One-off entries are settled the month they're logged; recurring ones
+      // only count once they're actually marked received / paid.
+      const settled = (e: Entry) => e.frequency !== "monthly" || gotPaid(e);
+      const fromBalance = (e: Entry) =>
+        e.frequency !== "monthly" || e.payments.some((p) => p.month === month && p.fromBalance);
+
+      const expectedIncome = sumBy(inc);
+      const receivedIncome = sumBy(inc, settled);
+      const billsDue = sumBy(exp);
+      const billsPaid = sumBy(exp, settled);
+      const billsUnpaid = billsDue - billsPaid;
+      const spentFromBalance = sumBy(exp, (e) => settled(e) && fromBalance(e));
+
+      const debtPaid = debts.reduce(
         (s, d) =>
           s +
           d.debtPayments.reduce(
-            (ps, p) => ps + (p.kind === "payment" && p.fromBalance ? p.amount : 0),
+            (ps, p) =>
+              ps +
+              (p.kind === "payment" && p.fromBalance && monthKey(new Date(p.paidAt)) === month
+                ? p.amount
+                : 0),
             0
           ),
         0
-      ),
-    [debts]
+      );
+
+      const carryIn = carry;
+      const closing = carryIn + receivedIncome - spentFromBalance - debtPaid;
+      carry = closing;
+      return {
+        month,
+        carryIn,
+        expectedIncome,
+        receivedIncome,
+        billsDue,
+        billsPaid,
+        billsUnpaid,
+        spentFromBalance,
+        debtPaid,
+        closing,
+        // What's genuinely free once this month's remaining bills are covered.
+        available: closing - billsUnpaid,
+      };
+    });
+  }, [income, expenses, debts, startMonth, currentMonth]);
+
+  const monthRow = useMemo(
+    () => ledger.find((r) => r.month === selectedMonth) ?? ledger[ledger.length - 1],
+    [ledger, selectedMonth]
   );
-  const balance = surplus - debtPaidFromBalance;
+  const balance = monthRow?.closing ?? 0;
+  const monthlySurplus = monthRow?.available ?? 0;
+  const monthlyIncome = monthRow?.receivedIncome ?? 0;
+  const totalIncome = monthRow?.receivedIncome ?? 0;
+  const totalExpense = monthRow?.billsDue ?? 0;
   const dti = monthlyIncome > 0 ? totalDebt / (monthlyIncome * 12) : 0;
   const monthlyToDebt = Math.max(0, monthlySurplus * (payoutPct / 100));
 
@@ -354,17 +400,64 @@ export default function Dashboard({
           label="Balance"
           value={fmt(balance)}
           accent={balance >= 0 ? "emerald" : "rose"}
-          sub={offBalancePaid > 0 ? `${fmt(offBalancePaid)} paid off-balance` : undefined}
+          sub={
+            monthRow && monthRow.carryIn !== 0
+              ? `${fmt(monthRow.carryIn)} carried in`
+              : "Left at end of this month"
+          }
         />
-        <StatCard label="Expenses" value={fmt(totalExpense)} accent="rose" />
+        <StatCard
+          label="Expenses"
+          value={fmt(totalExpense)}
+          accent="rose"
+          sub={
+            monthRow && monthRow.billsUnpaid > 0
+              ? `${fmt(monthRow.billsUnpaid)} still unpaid`
+              : monthRow && monthRow.billsDue > 0
+              ? "All bills paid"
+              : undefined
+          }
+        />
         <StatCard label="Debt" value={fmt(totalDebt)} accent="amber" />
         <StatCard
-          label="Monthly surplus"
+          label="Free to spend"
           value={fmt(monthlySurplus)}
           accent={monthlySurplus >= 0 ? "sky" : "rose"}
-          sub="Recurring income − expenses"
+          sub={
+            monthRow && monthRow.billsUnpaid > 0
+              ? `After ${fmt(monthRow.billsUnpaid)} of bills left`
+              : "Bills covered — all yours"
+          }
         />
       </section>
+
+      {monthRow && (
+        <section className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-bold">{monthDisplay(selectedMonth)} ledger</h2>
+            {monthRow.expectedIncome > monthRow.receivedIncome && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                {fmt(monthRow.expectedIncome - monthRow.receivedIncome)} income not received yet
+              </span>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-2 text-sm tabular-nums">
+            <LedgerBit label="Carried in" value={monthRow.carryIn} tone="slate" />
+            <span className="text-slate-600">+</span>
+            <LedgerBit label="Income received" value={monthRow.receivedIncome} tone="emerald" />
+            <span className="text-slate-600">−</span>
+            <LedgerBit label="Bills paid" value={monthRow.spentFromBalance} tone="rose" />
+            <span className="text-slate-600">−</span>
+            <LedgerBit label="Debt paid" value={monthRow.debtPaid} tone="amber" />
+            <span className="text-slate-600">=</span>
+            <LedgerBit label="Left over" value={monthRow.closing} tone="sky" strong />
+          </div>
+          <p className="text-xs text-slate-500 mt-3">
+            Whatever's left rolls into {monthDisplay(shiftMonth(selectedMonth, 1))}. Mark income as
+            received when it actually lands — nothing counts until you confirm it.
+          </p>
+        </section>
+      )}
 
       {milestone && (
         <section
@@ -397,6 +490,10 @@ export default function Dashboard({
           total={totalIncome}
           onAdd={() => setModalType("income")}
           onDelete={deleteEntry}
+          selectedMonth={selectedMonth}
+          onTogglePaid={(id, paid) => toggleReceived(id, paid)}
+          payBusy={payBusy}
+          paidLabels={{ header: "Got it", yes: "✓ Received", no: "Mark received" }}
         />
         <CategoryTable
           title="Expenses"
@@ -482,7 +579,7 @@ export default function Dashboard({
               </span>
             </h2>
             <p className="text-slate-400 text-sm">
-              Driven by your <span className="text-sky-300">monthly recurring</span> surplus ({fmt(monthlySurplus)}/mo).
+              Driven by what's <span className="text-sky-300">free after this month's bills</span> ({fmt(monthlySurplus)}).
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -734,6 +831,7 @@ function CategoryTable({
   onTogglePaid,
   payBusy,
   onLogPayment,
+  paidLabels,
 }: {
   title: string;
   color: "emerald" | "rose" | "amber";
@@ -746,7 +844,9 @@ function CategoryTable({
   onTogglePaid?: (id: string, paid: boolean, label: string, amount: number) => void;
   payBusy?: string | null;
   onLogPayment?: (id: string, label: string) => void;
+  paidLabels?: { header: string; yes: string; no: string };
 }) {
+  const marks = paidLabels ?? { header: "Paid", yes: "✓ Paid", no: "Mark paid" };
   const map = {
     emerald: { bar: "bg-emerald-500", text: "text-emerald-400", chip: "bg-emerald-500/15 border-emerald-500/30", btn: "bg-emerald-500 hover:bg-emerald-400 text-slate-950" },
     rose: { bar: "bg-rose-500", text: "text-rose-400", chip: "bg-rose-500/15 border-rose-500/30", btn: "bg-rose-500 hover:bg-rose-400 text-white" },
@@ -771,7 +871,7 @@ function CategoryTable({
               <th className="text-left px-4 py-2">Label</th>
               <th className="text-right px-4 py-2">Amount</th>
               {showShare && <th className="text-right px-4 py-2">Share</th>}
-              {onTogglePaid && <th className="text-center px-4 py-2">Paid</th>}
+              {onTogglePaid && <th className="text-center px-4 py-2">{marks.header}</th>}
               <th className="px-4 py-2 w-8"></th>
             </tr>
           </thead>
@@ -839,7 +939,7 @@ function CategoryTable({
                             : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
                         }`}
                       >
-                        {paid ? "✓ Paid" : "Mark paid"}
+                        {paid ? marks.yes : marks.no}
                       </button>
                     ) : (
                       <span className="text-slate-600">—</span>
@@ -898,6 +998,32 @@ function StatCard({
       <p className="text-2xl font-bold mt-2 tabular-nums text-white">{value}</p>
       {sub && <p className="text-xs text-slate-400 mt-1">{sub}</p>}
     </div>
+  );
+}
+
+function LedgerBit({
+  label,
+  value,
+  tone,
+  strong,
+}: {
+  label: string;
+  value: number;
+  tone: "slate" | "emerald" | "rose" | "amber" | "sky";
+  strong?: boolean;
+}) {
+  const colors = {
+    slate: "text-slate-300 border-slate-700",
+    emerald: "text-emerald-300 border-emerald-500/30",
+    rose: "text-rose-300 border-rose-500/30",
+    amber: "text-amber-300 border-amber-500/30",
+    sky: "text-sky-300 border-sky-500/40",
+  }[tone];
+  return (
+    <span className={`px-3 py-1.5 rounded-xl bg-slate-900/70 border ${colors} ${strong ? "font-bold" : ""}`}>
+      <span className="text-[10px] uppercase tracking-wider text-slate-500 mr-2">{label}</span>
+      {fmt(value)}
+    </span>
   );
 }
 
