@@ -36,6 +36,15 @@ jobs:
           echo "--- ios tree ---"
           find ios -maxdepth 4 -type f | head -50
 
+      # cap add ios scaffolds Capacitor's stock AppIcon, so the real icons have
+      # to be generated after it exists and before the archive is built.
+      - name: Generate app icon and splash
+        run: |
+          set -eo pipefail
+          npx capacitor-assets generate --ios
+          echo "--- generated icons ---"
+          ls -1 ios/App/App/Assets.xcassets/AppIcon.appiconset | head -20
+
       - name: Resolve SPM packages
         working-directory: ios/App
         run: |

@@ -1,3 +1,12 @@
-App icon placeholder.
-After `npx cap add ios`, replace icons in ios/App/App/Assets.xcassets/AppIcon.appiconset/
-Recommended: generate full icon set with https://www.appicon.co/ from a 1024x1024 PNG.
+App icons are generated in CI, not edited by hand.
+
+Source images live in resources/:
+  resources/icon.png          1024x1024, no transparency, no rounded corners
+  resources/splash.png        2732x2732
+  resources/splash-dark.png   2732x2732
+
+The build-ipa workflow runs `npx capacitor-assets generate --ios` after
+`npx cap add ios`, which writes ios/App/App/Assets.xcassets/. Editing that
+folder directly is pointless -- the ios/ project is regenerated every build.
+
+To change the icon, replace resources/icon.png and push.
