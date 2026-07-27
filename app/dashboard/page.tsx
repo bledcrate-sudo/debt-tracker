@@ -22,6 +22,8 @@ export default async function DashboardPage() {
       initialEntries={entries.map((e) => ({
         ...e,
         createdAt: e.createdAt.toISOString(),
+        sourceKind: e.sourceKind,
+        debtEntryId: e.debtEntryId,
         payments: e.payments.map((p) => ({
           month: p.month,
           fromBalance: p.fromBalance,

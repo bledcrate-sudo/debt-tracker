@@ -28,6 +28,10 @@ model Entry {
   apr        Float?   // annual interest rate %, debts only
   minPayment Float?   // required minimum monthly payment, debts only
   dueDay     Int?     // day of month payment is due (1-31), debts only
+  // Purchases only: where the money came from. null behaves as "balance".
+  sourceKind  String? // "balance" | "off" | "debt"
+  debtEntryId String? // the card/loan it went on, when sourceKind is "debt"
+  chargeId    String? // the DebtPayment charge raised for it, removed on delete
   note      String?
   createdAt DateTime  @default(now())
   payments  Payment[]

@@ -14,6 +14,8 @@ type Entry = {
   apr?: number | null;
   minPayment?: number | null;
   dueDay?: number | null;
+  sourceKind?: string | null;
+  debtEntryId?: string | null;
   note: string | null;
   createdAt: string;
   payments: { month: string; fromBalance: boolean; debtEntryId?: string | null }[];
@@ -319,8 +321,14 @@ export default function Dashboard({
       const spentFromBalance = sumBy(exp, (e) => settled(e) && fromBalance(e));
 
       // Purchases are already-spent money — they hit the balance the month
-      // they're logged, with no paid/unpaid state to track.
-      const purchaseSpend = sumBy(purchases.filter((e) => bornIn(e) === month));
+      // they're logged, with no paid/unpaid state to track. Ones paid off
+      // balance or put on a card never touched it, so they don't reduce it.
+      const monthPurchases = purchases.filter((e) => bornIn(e) === month);
+      const purchaseSpend = sumBy(
+        monthPurchases,
+        (e) => (e.sourceKind ?? "balance") === "balance"
+      );
+      const purchaseTotal = sumBy(monthPurchases);
 
       const debtPaid = debts.reduce(
         (s, d) =>
@@ -349,6 +357,7 @@ export default function Dashboard({
         billsUnpaid,
         spentFromBalance,
         purchaseSpend,
+        purchaseTotal,
         debtPaid,
         closing,
         // What's genuinely free once this month's remaining bills are covered.
@@ -366,7 +375,7 @@ export default function Dashboard({
   const monthlyIncome = monthRow?.receivedIncome ?? 0;
   const totalIncome = monthRow?.receivedIncome ?? 0;
   const totalExpense = monthRow?.billsDue ?? 0;
-  const totalPurchases = monthRow?.purchaseSpend ?? 0;
+  const totalPurchases = monthRow?.purchaseTotal ?? 0;
   const dti = monthlyIncome > 0 ? totalDebt / (monthlyIncome * 12) : 0;
   const monthlyToDebt = Math.max(0, monthlySurplus * (payoutPct / 100));
 
@@ -403,7 +412,7 @@ export default function Dashboard({
     : overallProgress >= 0.25 ? { pct: 25, msg: "First quarter down — momentum is building." }
     : null;
 
-  async function addEntry(payload: { type: EntryType; label: string; amount: number; frequency: "once" | "monthly"; apr?: number; minPayment?: number; dueDay?: number; note?: string }) {
+  async function addEntry(payload: { type: EntryType; label: string; amount: number; frequency: "once" | "monthly"; apr?: number; minPayment?: number; dueDay?: number; source?: PaySource; debtEntryId?: string; note?: string }) {
     setBusy(true);
     const r = await fetch("/api/entries", {
       method: "POST",
@@ -413,14 +422,19 @@ export default function Dashboard({
     setBusy(false);
     if (!r.ok) return alert("Failed to add entry");
     const created: Entry = await r.json();
-    setEntries((cur) => [created, ...cur]);
     setModalType(null);
+    // Buying on a card also raises a charge on that debt server-side.
+    if (payload.source === "debt") return refreshEntries();
+    setEntries((cur) => [created, ...cur]);
   }
 
   async function deleteEntry(id: string) {
     if (!confirm("Delete this entry?")) return;
+    const hadCharge = !!entries.find((e) => e.id === id)?.debtEntryId;
     const r = await fetch(`/api/entries/${id}`, { method: "DELETE" });
     if (!r.ok) return alert("Failed to delete");
+    // Deleting a card purchase drops its debt charge too.
+    if (hadCharge) return refreshEntries();
     setEntries((cur) => cur.filter((e) => e.id !== id));
   }
 
@@ -515,7 +529,11 @@ export default function Dashboard({
           label="Purchases"
           value={fmt(totalPurchases)}
           accent="violet"
-          sub="Spent this month"
+          sub={
+            monthRow && monthRow.purchaseTotal > monthRow.purchaseSpend
+              ? `${fmt(monthRow.purchaseTotal - monthRow.purchaseSpend)} not from balance`
+              : "Spent this month"
+          }
         />
         <StatCard label="Debt" value={fmt(totalDebt)} accent="amber" />
         <StatCard
@@ -895,6 +913,7 @@ export default function Dashboard({
       {modalType && (
         <EntryModal
           type={modalType}
+          debts={debts.map((d) => ({ id: d.id, label: d.label, amount: d.amount }))}
           onClose={() => setModalType(null)}
           onSubmit={addEntry}
           busy={busy}
@@ -1020,9 +1039,21 @@ function CategoryTable({
                   <p className="font-medium truncate flex items-center gap-2">
                     {e.label}
                     {e.type === "purchase" ? (
-                      <span className="text-[10px] uppercase tracking-wider text-slate-500">
-                        {new Date(e.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
-                      </span>
+                      <>
+                        <span className="text-[10px] uppercase tracking-wider text-slate-500">
+                          {new Date(e.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                        </span>
+                        {e.sourceKind === "debt" && (
+                          <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                            On card
+                          </span>
+                        )}
+                        {e.sourceKind === "off" && (
+                          <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-700/50 text-slate-400 border border-slate-600/40">
+                            Off balance
+                          </span>
+                        )}
+                      </>
                     ) : (
                       <span
                         className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${
@@ -1214,10 +1245,12 @@ function EntryModal({
   onClose,
   onSubmit,
   busy,
+  debts,
 }: {
   type: EntryType;
+  debts: { id: string; label: string; amount: number }[];
   onClose: () => void;
-  onSubmit: (p: { type: EntryType; label: string; amount: number; frequency: "once" | "monthly"; apr?: number; minPayment?: number; dueDay?: number; note?: string }) => void;
+  onSubmit: (p: { type: EntryType; label: string; amount: number; frequency: "once" | "monthly"; apr?: number; minPayment?: number; dueDay?: number; source?: PaySource; debtEntryId?: string; note?: string }) => void;
   busy: boolean;
 }) {
   useEscapeClose(onClose);
@@ -1227,6 +1260,8 @@ function EntryModal({
   const [apr, setApr] = useState("");
   const [minPayment, setMinPayment] = useState("");
   const [dueDay, setDueDay] = useState("");
+  const [source, setSource] = useState<PaySource>("balance");
+  const [debtEntryId, setDebtEntryId] = useState("");
   const [frequency, setFrequency] = useState<"once" | "monthly">(
     type === "debt" || type === "purchase" ? "once" : "monthly"
   );
@@ -1252,11 +1287,14 @@ function EntryModal({
     const aprN = parseFloat(apr);
     const minN = parseFloat(minPayment);
     const dueN = parseInt(dueDay);
+    if (type === "purchase" && source === "debt" && !debtEntryId) return;
     onSubmit({
       type,
       label: label.trim(),
       amount: n,
       frequency,
+      source: type === "purchase" ? source : undefined,
+      debtEntryId: type === "purchase" && source === "debt" ? debtEntryId : undefined,
       apr: type === "debt" && !isNaN(aprN) && aprN >= 0 ? aprN : undefined,
       minPayment: type === "debt" && !isNaN(minN) && minN > 0 ? minN : undefined,
       dueDay: type === "debt" && !isNaN(dueN) && dueN >= 1 && dueN <= 31 ? dueN : undefined,
@@ -1279,7 +1317,68 @@ function EntryModal({
         </div>
         <form onSubmit={submit} className="space-y-3">
           {type === "purchase" ? (
-            <p className="text-xs text-slate-500">{hints.purchase.once}</p>
+            <div>
+              <label className="block text-xs uppercase tracking-wider text-slate-400 mb-2">
+                Paid with
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSource("balance")}
+                  className={`px-2 py-2.5 rounded-xl border text-sm font-medium transition ${
+                    source === "balance"
+                      ? "bg-emerald-500/20 border-emerald-500 text-emerald-200"
+                      : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+                  }`}
+                >
+                  Balance
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSource("off")}
+                  className={`px-2 py-2.5 rounded-xl border text-sm font-medium transition ${
+                    source === "off"
+                      ? "bg-slate-600/40 border-slate-500 text-white"
+                      : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+                  }`}
+                >
+                  Off balance
+                </button>
+                <button
+                  type="button"
+                  disabled={debts.length === 0}
+                  onClick={() => setSource("debt")}
+                  className={`px-2 py-2.5 rounded-xl border text-sm font-medium transition disabled:opacity-40 ${
+                    source === "debt"
+                      ? "bg-amber-500/20 border-amber-500 text-amber-200"
+                      : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+                  }`}
+                >
+                  Card
+                </button>
+              </div>
+              <p className="text-xs text-slate-500 mt-2">
+                {source === "balance"
+                  ? "Comes straight out of your balance."
+                  : source === "off"
+                  ? "Paid with untracked money — balance unaffected."
+                  : "Added to what you owe on the card — balance unaffected."}
+              </p>
+              {source === "debt" && (
+                <select
+                  value={debtEntryId}
+                  onChange={(e) => setDebtEntryId(e.target.value)}
+                  className="w-full mt-2 px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-amber-500 outline-none"
+                >
+                  <option value="">Choose a card or loan…</option>
+                  {debts.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.label} — {fmt(d.amount)} owed
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
           ) : (
           <div>
             <label className="block text-xs uppercase tracking-wider text-slate-400 mb-2">Frequency</label>
