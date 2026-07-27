@@ -42,6 +42,8 @@ model Payment {
   entry       Entry    @relation(fields: [entryId], references: [id], onDelete: Cascade)
   month       String   // "YYYY-MM"
   fromBalance Boolean  @default(true)
+  debtEntryId String?  // set when the bill was put on a credit card / debt
+  chargeId    String?  // the DebtPayment charge raised for it, removed on unpay
   paidAt      DateTime @default(now())
 
   @@unique([entryId, month])

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { signOut } from "next-auth/react";
 
 type EntryType = "income" | "expense" | "purchase" | "debt";
+type PaySource = "balance" | "off" | "debt";
 
 type Entry = {
   id: string;
@@ -15,7 +16,7 @@ type Entry = {
   dueDay?: number | null;
   note: string | null;
   createdAt: string;
-  payments: { month: string; fromBalance: boolean }[];
+  payments: { month: string; fromBalance: boolean; debtEntryId?: string | null }[];
   debtPayments: { id: string; amount: number; kind: string; fromBalance: boolean; note: string | null; paidAt: string }[];
   originalAmount?: number;
   paidSoFar?: number;
@@ -160,6 +161,9 @@ export default function Dashboard({
   }, []);
 
   async function unmarkPaid(entryId: string) {
+    const wasOnCard = entries
+      .find((e) => e.id === entryId)
+      ?.payments.some((p) => p.month === selectedMonth && p.debtEntryId);
     setPayBusy(entryId);
     const r = await fetch(`/api/entries/${entryId}/pay`, {
       method: "DELETE",
@@ -168,6 +172,8 @@ export default function Dashboard({
     });
     setPayBusy(null);
     if (!r.ok) return alert("Failed to update paid status");
+    // Undoing a card payment also drops the debt charge server-side.
+    if (wasOnCard) return refreshEntries();
     setEntries((cur) =>
       cur.map((e) =>
         e.id !== entryId ? e : { ...e, payments: e.payments.filter((p) => p.month !== selectedMonth) }
@@ -175,16 +181,19 @@ export default function Dashboard({
     );
   }
 
-  async function markPaid(entryId: string, fromBalance: boolean) {
+  async function markPaid(entryId: string, source: PaySource, debtEntryId?: string) {
     setPayPrompt(null);
     setPayBusy(entryId);
     const r = await fetch(`/api/entries/${entryId}/pay`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ month: selectedMonth, fromBalance }),
+      body: JSON.stringify({ month: selectedMonth, source, debtEntryId }),
     });
     setPayBusy(null);
     if (!r.ok) return alert("Failed to update paid status");
+    // Charging a bill to a card creates a debt charge server-side, so pull the
+    // fresh entry list rather than trying to mirror both writes by hand.
+    if (source === "debt") return refreshEntries();
     setEntries((cur) =>
       cur.map((e) =>
         e.id !== entryId
@@ -193,11 +202,17 @@ export default function Dashboard({
               ...e,
               payments: [
                 ...e.payments.filter((p) => p.month !== selectedMonth),
-                { month: selectedMonth, fromBalance },
+                { month: selectedMonth, fromBalance: source === "balance", debtEntryId: null },
               ],
             }
       )
     );
+  }
+
+  async function refreshEntries() {
+    const r = await fetch("/api/entries");
+    if (!r.ok) return;
+    setEntries(await r.json());
   }
 
   function togglePaid(entryId: string, paid: boolean, label: string, amount: number) {
@@ -205,10 +220,10 @@ export default function Dashboard({
     else setPayPrompt({ id: entryId, label, amount });
   }
 
-  // Income has no from/off-balance question — it either landed or it didn't.
+  // Income has no source question — it either landed or it didn't.
   function toggleReceived(entryId: string, received: boolean) {
     if (received) unmarkPaid(entryId);
-    else markPaid(entryId, true);
+    else markPaid(entryId, "balance");
   }
 
   const [debtModal, setDebtModal] = useState<{ id: string; label: string } | null>(null);
@@ -902,8 +917,9 @@ export default function Dashboard({
           label={payPrompt.label}
           amount={payPrompt.amount}
           busy={payBusy === payPrompt.id}
+          debts={debts.map((d) => ({ id: d.id, label: d.label, amount: d.amount }))}
           onClose={() => setPayPrompt(null)}
-          onChoose={(fromBalance) => markPaid(payPrompt.id, fromBalance)}
+          onChoose={(source, debtEntryId) => markPaid(payPrompt.id, source, debtEntryId)}
         />
       )}
 
@@ -1058,7 +1074,11 @@ function CategoryTable({
                             : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
                         }`}
                       >
-                        {paid ? marks.yes : marks.no}
+                        {paid
+                          ? e.payments.find((p) => p.month === selectedMonth)?.debtEntryId
+                            ? "✓ On card"
+                            : marks.yes
+                          : marks.no}
                       </button>
                     ) : (
                       <span className="text-slate-600">—</span>
@@ -1464,45 +1484,92 @@ function PaySourceModal({
   label,
   amount,
   busy,
+  debts,
   onClose,
   onChoose,
 }: {
   label: string;
   amount: number;
   busy: boolean;
+  debts: { id: string; label: string; amount: number }[];
   onClose: () => void;
-  onChoose: (fromBalance: boolean) => void;
+  onChoose: (source: PaySource, debtEntryId?: string) => void;
 }) {
   useEscapeClose(onClose);
+  const [pickingDebt, setPickingDebt] = useState(false);
+
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm grid place-items-center z-50 p-4" onClick={onClose}>
       <div
         onClick={(e) => e.stopPropagation()}
-        className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl"
+        className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl max-h-[85vh] overflow-y-auto"
       >
         <div className="flex items-center justify-between mb-1">
-          <h2 className="text-xl font-bold">Mark "{label}" as paid</h2>
+          <h2 className="text-xl font-bold">
+            {pickingDebt ? "Which card or loan?" : `Mark "${label}" as paid`}
+          </h2>
           <button onClick={onClose} className="text-slate-500 hover:text-white">✕</button>
         </div>
-        <p className="text-slate-400 text-sm mb-4">{fmt(amount)} — where did this payment come from?</p>
-        <div className="space-y-2">
-          <button
-            disabled={busy}
-            onClick={() => onChoose(true)}
-            className="w-full text-left px-4 py-3 rounded-xl border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 transition disabled:opacity-50"
-          >
-            <p className="font-semibold text-emerald-300">From balance</p>
-            <p className="text-xs text-slate-400 mt-0.5">Deducted from your tracked income — reduces balance.</p>
-          </button>
-          <button
-            disabled={busy}
-            onClick={() => onChoose(false)}
-            className="w-full text-left px-4 py-3 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 transition disabled:opacity-50"
-          >
-            <p className="font-semibold text-white">Off balance</p>
-            <p className="text-xs text-slate-400 mt-0.5">Paid from outside money — balance stays unaffected.</p>
-          </button>
-        </div>
+        <p className="text-slate-400 text-sm mb-4">
+          {pickingDebt
+            ? `${fmt(amount)} gets added to the debt you pick.`
+            : `${fmt(amount)} — where did this payment come from?`}
+        </p>
+
+        {pickingDebt ? (
+          <div className="space-y-2">
+            {debts.map((d) => (
+              <button
+                key={d.id}
+                disabled={busy}
+                onClick={() => onChoose("debt", d.id)}
+                className="w-full text-left px-4 py-3 rounded-xl border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 transition disabled:opacity-50"
+              >
+                <p className="font-semibold text-amber-300">{d.label}</p>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {fmt(d.amount)} owed → {fmt(d.amount + amount)} after this
+                </p>
+              </button>
+            ))}
+            <button
+              onClick={() => setPickingDebt(false)}
+              className="w-full px-4 py-2.5 rounded-xl border border-slate-700 text-slate-400 hover:text-white text-sm"
+            >
+              Back
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <button
+              disabled={busy}
+              onClick={() => onChoose("balance")}
+              className="w-full text-left px-4 py-3 rounded-xl border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 transition disabled:opacity-50"
+            >
+              <p className="font-semibold text-emerald-300">From balance</p>
+              <p className="text-xs text-slate-400 mt-0.5">Deducted from your tracked income — reduces balance.</p>
+            </button>
+            <button
+              disabled={busy}
+              onClick={() => onChoose("off")}
+              className="w-full text-left px-4 py-3 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 transition disabled:opacity-50"
+            >
+              <p className="font-semibold text-white">Off balance</p>
+              <p className="text-xs text-slate-400 mt-0.5">Paid from outside money — balance stays unaffected.</p>
+            </button>
+            <button
+              disabled={busy || debts.length === 0}
+              onClick={() => setPickingDebt(true)}
+              className="w-full text-left px-4 py-3 rounded-xl border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 transition disabled:opacity-40"
+            >
+              <p className="font-semibold text-amber-300">Paid with card / debt</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {debts.length === 0
+                  ? "No debts logged yet — add one to use this."
+                  : "Balance untouched; the amount is added to what you owe."}
+              </p>
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
