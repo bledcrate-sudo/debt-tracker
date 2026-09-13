@@ -291,22 +291,11 @@ export default function Dashboard({
       );
       const purchaseTotal = sumBy(monthPurchases);
 
-      const debtPaid = debts.reduce(
-        (s, d) =>
-          s +
-          d.debtPayments.reduce(
-            (ps, p) =>
-              ps +
-              (p.kind === "payment" && p.fromBalance && monthKey(new Date(p.paidAt)) === month
-                ? p.amount
-                : 0),
-            0
-          ),
-        0
-      );
-
+      // Balance and Debt are tracked independently — a debt payment changes
+      // what you owe (see the Debt card/table) but never touches this
+      // month's cash balance, even when it's flagged "from balance".
       const carryIn = carry;
-      const closing = carryIn + receivedIncome - spentFromBalance - purchaseSpend - debtPaid;
+      const closing = carryIn + receivedIncome - spentFromBalance - purchaseSpend;
       carry = closing;
       return {
         month,
@@ -319,13 +308,12 @@ export default function Dashboard({
         spentFromBalance,
         purchaseSpend,
         purchaseTotal,
-        debtPaid,
         closing,
         // What's genuinely free once this month's remaining bills are covered.
         available: closing - billsUnpaid,
       };
     });
-  }, [income, expenses, purchases, debts, startMonth, currentMonth]);
+  }, [income, expenses, purchases, startMonth, currentMonth]);
 
   const monthRow = useMemo(
     () => ledger.find((r) => r.month === selectedMonth) ?? ledger[ledger.length - 1],
@@ -590,14 +578,13 @@ export default function Dashboard({
             <LedgerBit label="Bills paid" value={monthRow.spentFromBalance} tone="rose" />
             <span className="text-slate-600">−</span>
             <LedgerBit label="Purchases" value={monthRow.purchaseSpend} tone="violet" />
-            <span className="text-slate-600">−</span>
-            <LedgerBit label="Debt paid" value={monthRow.debtPaid} tone="amber" />
             <span className="text-slate-600">=</span>
             <LedgerBit label="Left over" value={monthRow.closing} tone="sky" strong />
           </div>
           <p className="text-xs text-slate-500 mt-3">
             Whatever's left rolls into {monthDisplay(shiftMonth(selectedMonth, 1))}. Mark income as
-            received when it actually lands — nothing counts until you confirm it.
+            received when it actually lands — nothing counts until you confirm it. Debt is tracked
+            separately below and never affects this balance.
           </p>
         </section>
       )}
@@ -723,7 +710,7 @@ export default function Dashboard({
                 {totalIncome ? pct(balance / totalIncome) : "—"}
               </td>
               <td className="px-5 py-3 hidden md:table-cell text-slate-500">
-                Income − Bills − Purchases − Debt payments from balance
+                Income − Bills − Purchases (debt is tracked separately, not netted in)
               </td>
             </tr>
           </tbody>
