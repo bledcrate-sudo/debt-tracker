@@ -547,7 +547,7 @@ export default function Dashboard({
               : "Spent this month"
           }
         />
-        <StatCard label="Debt" value={fmt(totalDebt)} accent="amber" />
+        <StatCard label="Debt" value={fmt(totalDebt)} accent="orange" />
         <StatCard
           label="Free to spend"
           value={fmt(monthlySurplus)}
@@ -649,7 +649,7 @@ export default function Dashboard({
         />
         <CategoryTable
           title="Debt"
-          color="amber"
+          color="orange"
           rows={debts}
           total={totalDebt}
           onAdd={() => setModalType("debt")}
@@ -697,7 +697,7 @@ export default function Dashboard({
               count={debts.length}
               total={-totalDebt}
               pctOfIncome={totalIncome ? -totalDebt / totalIncome : 0}
-              color="amber"
+              color="orange"
               note={`DTI ratio ${pct(dti)}`}
             />
             <tr className="bg-slate-900/80 font-bold">
@@ -718,12 +718,12 @@ export default function Dashboard({
       </section>
 
       {/* Debt payment plan */}
-      <section className="bg-gradient-to-br from-amber-500/10 via-slate-900 to-slate-900 border border-amber-500/30 rounded-2xl p-6">
+      <section className="bg-gradient-to-br from-orange-500/10 via-slate-900 to-slate-900 border border-orange-500/30 rounded-2xl p-6">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div>
             <h2 className="text-xl font-bold flex items-center gap-2">
               <span>Debt payment plan</span>
-              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
+              <span className="text-xs px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-300 border border-orange-500/40">
                 Smart plan
               </span>
             </h2>
@@ -736,7 +736,7 @@ export default function Dashboard({
               <button
                 onClick={() => setStrategy("avalanche")}
                 className={`px-3 py-1.5 rounded-lg text-sm transition ${
-                  strategy === "avalanche" ? "bg-amber-500 text-slate-950 font-semibold" : "text-slate-300"
+                  strategy === "avalanche" ? "bg-orange-500 text-slate-950 font-semibold" : "text-slate-300"
                 }`}
               >
                 Avalanche
@@ -744,7 +744,7 @@ export default function Dashboard({
               <button
                 onClick={() => setStrategy("snowball")}
                 className={`px-3 py-1.5 rounded-lg text-sm transition ${
-                  strategy === "snowball" ? "bg-amber-500 text-slate-950 font-semibold" : "text-slate-300"
+                  strategy === "snowball" ? "bg-orange-500 text-slate-950 font-semibold" : "text-slate-300"
                 }`}
               >
                 Snowball
@@ -767,8 +767,8 @@ export default function Dashboard({
             ) : (
               <>
                 Switching to{" "}
-                <span className="text-amber-300 font-semibold">{strategy === "avalanche" ? "snowball" : "avalanche"}</span>{" "}
-                would save <span className="text-amber-300">{fmt(plan.totalInterest - altPlan.totalInterest)}</span> in interest.
+                <span className="text-orange-300 font-semibold">{strategy === "avalanche" ? "snowball" : "avalanche"}</span>{" "}
+                would save <span className="text-orange-300">{fmt(plan.totalInterest - altPlan.totalInterest)}</span> in interest.
               </>
             )}
           </p>
@@ -798,9 +798,9 @@ export default function Dashboard({
                 step={5}
                 value={payoutPct}
                 onChange={(e) => setPayoutPct(parseInt(e.target.value))}
-                className="flex-1 accent-amber-500"
+                className="flex-1 accent-orange-500"
               />
-              <span className="text-amber-300 font-semibold w-12 text-right tabular-nums">{payoutPct}%</span>
+              <span className="text-orange-300 font-semibold w-12 text-right tabular-nums">{payoutPct}%</span>
             </div>
           </div>
         </div>
@@ -820,7 +820,7 @@ export default function Dashboard({
                   value={whatIfExtra || ""}
                   placeholder="0"
                   onChange={(e) => setWhatIfExtra(Math.max(0, parseFloat(e.target.value) || 0))}
-                  className="w-24 px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 focus:border-amber-500 outline-none text-sm tabular-nums"
+                  className="w-24 px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 focus:border-orange-500 outline-none text-sm tabular-nums"
                 />
                 <span className="text-slate-400 text-sm">/mo extra</span>
               </div>
@@ -868,12 +868,12 @@ export default function Dashboard({
               </thead>
               <tbody className="divide-y divide-slate-800">
                 {payoffOrder.map((d, i) => (
-                  <tr key={d.id} className="hover:bg-amber-500/5">
+                  <tr key={d.id} className="hover:bg-orange-500/5">
                     <td className="px-4 py-3 text-slate-500">{i + 1}</td>
                     <td className="px-4 py-3 font-medium">
                       {d.label}
                       {i === 0 && (
-                        <span className="ml-2 text-xs px-2 py-0.5 rounded bg-amber-500/20 text-amber-300">
+                        <span className="ml-2 text-xs px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">
                           attack first
                         </span>
                       )}
@@ -888,7 +888,7 @@ export default function Dashboard({
                         </div>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-amber-300">{fmt(d.amount)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-orange-300">{fmt(d.amount)}</td>
                     <td className="px-4 py-3 text-right hidden sm:table-cell text-slate-400 tabular-nums">
                       {d.apr != null ? `${d.apr}%` : "—"}
                     </td>
@@ -1011,7 +1011,7 @@ function CategoryTable({
   paidLabels,
 }: {
   title: string;
-  color: "emerald" | "rose" | "amber" | "violet";
+  color: "emerald" | "rose" | "orange" | "violet";
   rows: Entry[];
   total: number;
   onAdd: () => void;
@@ -1029,7 +1029,7 @@ function CategoryTable({
   const map = {
     emerald: { bar: "bg-emerald-500", text: "text-emerald-400", chip: "bg-emerald-500/15 border-emerald-500/30", btn: "bg-emerald-500 hover:bg-emerald-400 text-slate-950" },
     rose: { bar: "bg-rose-500", text: "text-rose-400", chip: "bg-rose-500/15 border-rose-500/30", btn: "bg-rose-500 hover:bg-rose-400 text-white" },
-    amber: { bar: "bg-amber-500", text: "text-amber-400", chip: "bg-amber-500/15 border-amber-500/30", btn: "bg-amber-500 hover:bg-amber-400 text-slate-950" },
+    orange: { bar: "bg-orange-500", text: "text-orange-400", chip: "bg-orange-500/15 border-orange-500/30", btn: "bg-orange-500 hover:bg-orange-400 text-slate-950" },
     violet: { bar: "bg-violet-500", text: "text-violet-400", chip: "bg-violet-500/15 border-violet-500/30", btn: "bg-violet-500 hover:bg-violet-400 text-white" },
   }[color];
   return (
@@ -1076,7 +1076,7 @@ function CategoryTable({
                           {new Date(e.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
                         </span>
                         {e.sourceKind === "debt" && (
-                          <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                          <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-300 border border-orange-500/30">
                             On card
                           </span>
                         )}
@@ -1098,7 +1098,7 @@ function CategoryTable({
                           {e.frequency === "monthly" ? "Monthly" : "Once"}
                         </span>
                         {e.sourceKind === "debt" && (
-                          <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                          <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-300 border border-orange-500/30">
                             On card
                           </span>
                         )}
@@ -1169,7 +1169,7 @@ function CategoryTable({
                     {onLogPayment && (
                       <button
                         onClick={() => onLogPayment(e.id, e.label)}
-                        className="px-2 py-1 rounded-lg text-xs font-semibold bg-amber-500/15 border border-amber-500/30 text-amber-300 hover:bg-amber-500/25"
+                        className="px-2 py-1 rounded-lg text-xs font-semibold bg-orange-500/15 border border-orange-500/30 text-orange-300 hover:bg-orange-500/25"
                       >
                         + Payment
                       </button>
@@ -1210,13 +1210,13 @@ function StatCard({
 }: {
   label: string;
   value: string;
-  accent: "emerald" | "rose" | "amber" | "sky" | "violet";
+  accent: "emerald" | "rose" | "orange" | "sky" | "violet";
   sub?: string;
 }) {
   const colors: Record<string, string> = {
     emerald: "from-emerald-500/20 to-emerald-500/0 border-emerald-500/30",
     rose: "from-rose-500/20 to-rose-500/0 border-rose-500/30",
-    amber: "from-amber-500/20 to-amber-500/0 border-amber-500/30",
+    orange: "from-orange-500/20 to-orange-500/0 border-orange-500/30",
     sky: "from-sky-500/20 to-sky-500/0 border-sky-500/30",
     violet: "from-violet-500/20 to-violet-500/0 border-violet-500/30",
   };
@@ -1237,7 +1237,7 @@ function LedgerBit({
 }: {
   label: string;
   value: number;
-  tone: "slate" | "emerald" | "rose" | "amber" | "sky" | "violet";
+  tone: "slate" | "emerald" | "rose" | "orange" | "sky" | "violet";
   strong?: boolean;
 }) {
   const fmt = useContext(CurrencyContext);
@@ -1245,7 +1245,7 @@ function LedgerBit({
     slate: "text-slate-300 border-slate-700",
     emerald: "text-emerald-300 border-emerald-500/30",
     rose: "text-rose-300 border-rose-500/30",
-    amber: "text-amber-300 border-amber-500/30",
+    orange: "text-orange-300 border-orange-500/30",
     sky: "text-sky-300 border-sky-500/40",
     violet: "text-violet-300 border-violet-500/30",
   }[tone];
@@ -1279,14 +1279,14 @@ function SumRow({
   count: number;
   total: number;
   pctOfIncome: number;
-  color: "emerald" | "rose" | "amber" | "violet";
+  color: "emerald" | "rose" | "orange" | "violet";
   note?: string;
 }) {
   const fmt = useContext(CurrencyContext);
   const map = {
     emerald: "text-emerald-400",
     rose: "text-rose-400",
-    amber: "text-amber-400",
+    orange: "text-orange-400",
     violet: "text-violet-400",
   };
   return (
@@ -1346,7 +1346,7 @@ function SourcePicker({
           onClick={() => setSource("debt")}
           className={`px-2 py-2.5 rounded-xl border text-sm font-medium transition disabled:opacity-40 ${
             source === "debt"
-              ? "bg-amber-500/20 border-amber-500 text-amber-200"
+              ? "bg-orange-500/20 border-orange-500 text-orange-200"
               : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
           }`}
         >
@@ -1364,7 +1364,7 @@ function SourcePicker({
         <select
           value={debtEntryId}
           onChange={(e) => setDebtEntryId(e.target.value)}
-          className="w-full mt-2 px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-amber-500 outline-none"
+          className="w-full mt-2 px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-orange-500 outline-none"
         >
           <option value="">Choose a card or loan…</option>
           {debts.map((d) => (
@@ -1537,7 +1537,7 @@ function EntryModal({
                 placeholder="APR % (optional)"
                 value={apr}
                 onChange={(e) => setApr(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-amber-500 outline-none"
+                className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-orange-500 outline-none"
               />
               <input
                 type="number"
@@ -1546,7 +1546,7 @@ function EntryModal({
                 placeholder="Min payment / mo"
                 value={minPayment}
                 onChange={(e) => setMinPayment(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-amber-500 outline-none"
+                className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-orange-500 outline-none"
               />
               <input
                 type="number"
@@ -1556,7 +1556,7 @@ function EntryModal({
                 placeholder="Due day (1–31)"
                 value={dueDay}
                 onChange={(e) => setDueDay(e.target.value)}
-                className="col-span-2 w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-amber-500 outline-none"
+                className="col-span-2 w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-orange-500 outline-none"
               />
               <p className="col-span-2 text-xs text-slate-500">
                 APR + minimum make the payoff plan accurate; due day shows a reminder before the payment date.
@@ -1664,7 +1664,7 @@ function EditEntryModal({
                 placeholder="APR % (optional)"
                 value={apr}
                 onChange={(e) => setApr(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-amber-500 outline-none"
+                className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-orange-500 outline-none"
               />
               <input
                 type="number"
@@ -1673,7 +1673,7 @@ function EditEntryModal({
                 placeholder="Min payment / mo"
                 value={minPayment}
                 onChange={(e) => setMinPayment(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-amber-500 outline-none"
+                className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-orange-500 outline-none"
               />
               <input
                 type="number"
@@ -1683,7 +1683,7 @@ function EditEntryModal({
                 placeholder="Due day (1–31)"
                 value={dueDay}
                 onChange={(e) => setDueDay(e.target.value)}
-                className="col-span-2 w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-amber-500 outline-none"
+                className="col-span-2 w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-orange-500 outline-none"
               />
             </div>
           )}
@@ -1951,9 +1951,9 @@ function PaySourceModal({
                 key={d.id}
                 disabled={busy}
                 onClick={() => onChoose("debt", d.id)}
-                className="w-full text-left px-4 py-3 rounded-xl border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 transition disabled:opacity-50"
+                className="w-full text-left px-4 py-3 rounded-xl border border-orange-500/40 bg-orange-500/10 hover:bg-orange-500/20 transition disabled:opacity-50"
               >
-                <p className="font-semibold text-amber-300">{d.label}</p>
+                <p className="font-semibold text-orange-300">{d.label}</p>
                 <p className="text-xs text-slate-400 mt-0.5">
                   {fmt(d.amount)} owed → {fmt(d.amount + amount)} after this
                 </p>
@@ -1987,9 +1987,9 @@ function PaySourceModal({
             <button
               disabled={busy || debts.length === 0}
               onClick={() => setPickingDebt(true)}
-              className="w-full text-left px-4 py-3 rounded-xl border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 transition disabled:opacity-40"
+              className="w-full text-left px-4 py-3 rounded-xl border border-orange-500/40 bg-orange-500/10 hover:bg-orange-500/20 transition disabled:opacity-40"
             >
-              <p className="font-semibold text-amber-300">Paid with card / debt</p>
+              <p className="font-semibold text-orange-300">Paid with card / debt</p>
               <p className="text-xs text-slate-400 mt-0.5">
                 {debts.length === 0
                   ? "No debts logged yet — add one to use this."
@@ -2124,17 +2124,17 @@ function DebtPaymentModal({
             placeholder={kind === "payment" ? "Payment amount" : "Amount spent"}
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-amber-500 outline-none"
+            className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-orange-500 outline-none"
           />
           <input
             placeholder="Note (optional)"
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-amber-500 outline-none"
+            className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-orange-500 outline-none"
           />
           <button
             disabled={busy}
-            className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold disabled:opacity-50"
+            className="w-full py-3 rounded-xl bg-orange-500 hover:bg-orange-400 text-slate-950 font-semibold disabled:opacity-50"
           >
             {busy ? "Logging..." : kind === "payment" ? "Log payment" : "Log card usage"}
           </button>
@@ -2190,12 +2190,12 @@ function PayoffChart({ timeline }: { timeline: number[] }) {
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-28" preserveAspectRatio="none" aria-label="Debt balance over time">
       <defs>
         <linearGradient id="payoffFill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.35" />
-          <stop offset="100%" stopColor="#f59e0b" stopOpacity="0" />
+          <stop offset="0%" stopColor="#f97316" stopOpacity="0.35" />
+          <stop offset="100%" stopColor="#f97316" stopOpacity="0" />
         </linearGradient>
       </defs>
       <polygon points={area} fill="url(#payoffFill)" />
-      <polyline points={pts} fill="none" stroke="#f59e0b" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+      <polyline points={pts} fill="none" stroke="#f97316" strokeWidth="2" vectorEffect="non-scaling-stroke" />
     </svg>
   );
 }
