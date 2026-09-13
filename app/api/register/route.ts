@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { normalizeEmail } from "@/lib/email";
+import { rateLimit, clientIp } from "@/lib/rate-limit";
 
 const schema = z.object({
   email: z.string().email(),
@@ -10,14 +12,18 @@ const schema = z.object({
 });
 
 export async function POST(req: Request) {
+  if (!rateLimit(`register:${clientIp(req)}`, 5, 10 * 60 * 1000)) {
+    return NextResponse.json({ error: "Too many attempts. Try again later." }, { status: 429 });
+  }
   try {
     const body = await req.json();
     const data = schema.parse(body);
-    const exists = await prisma.user.findUnique({ where: { email: data.email } });
+    const email = normalizeEmail(data.email);
+    const exists = await prisma.user.findUnique({ where: { email } });
     if (exists) return NextResponse.json({ error: "Email already registered" }, { status: 400 });
     const hashed = await bcrypt.hash(data.password, 10);
     await prisma.user.create({
-      data: { email: data.email, password: hashed, name: data.name },
+      data: { email, password: hashed, name: data.name },
     });
     return NextResponse.json({ ok: true });
   } catch (e: any) {

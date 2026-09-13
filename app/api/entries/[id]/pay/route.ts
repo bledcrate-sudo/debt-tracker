@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
 import { z } from "zod";
-import { authOptions } from "@/lib/auth";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { currentUserId } from "@/lib/session";
 
 const monthSchema = z.object({
   month: z.string().regex(/^\d{4}-\d{2}$/),
@@ -24,14 +24,13 @@ async function ownedEntry(id: string, userId: string) {
 
 // A bill charged to a card leaves a matching charge on that debt. Clearing the
 // paid flag has to take the charge with it, or the debt keeps growing.
-async function dropCharge(chargeId: string | null | undefined) {
+async function dropCharge(tx: Prisma.TransactionClient, chargeId: string | null | undefined) {
   if (!chargeId) return;
-  await prisma.debtPayment.deleteMany({ where: { id: chargeId } });
+  await tx.debtPayment.deleteMany({ where: { id: chargeId } });
 }
 
 export async function POST(req: Request, { params }: { params: { id: string } }) {
-  const session = await getServerSession(authOptions);
-  const userId = (session?.user as any)?.id as string | undefined;
+  const userId = await currentUserId();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const entry = await ownedEntry(params.id, userId);
@@ -49,36 +48,38 @@ export async function POST(req: Request, { params }: { params: { id: string } })
         return NextResponse.json({ error: "Debt not found" }, { status: 404 });
     }
 
-    // Re-paying the same month must not leave the previous charge behind.
-    const existing = await prisma.payment.findUnique({
-      where: { entryId_month: { entryId: entry.id, month } },
-    });
-    await dropCharge(existing?.chargeId);
+    const payment = await prisma.$transaction(async (tx) => {
+      // Re-paying the same month must not leave the previous charge behind.
+      const existing = await tx.payment.findUnique({
+        where: { entryId_month: { entryId: entry.id, month } },
+      });
+      await dropCharge(tx, existing?.chargeId);
 
-    let chargeId: string | null = null;
-    if (debt) {
-      const charge = await prisma.debtPayment.create({
-        data: {
-          entryId: debt.id,
-          amount: entry.amount,
-          kind: "charge",
-          fromBalance: false,
-          note: `${entry.label} (${month})`,
+      let chargeId: string | null = null;
+      if (debt) {
+        const charge = await tx.debtPayment.create({
+          data: {
+            entryId: debt.id,
+            amount: entry.amount,
+            kind: "charge",
+            fromBalance: false,
+            note: `${entry.label} (${month})`,
+          },
+        });
+        chargeId = charge.id;
+      }
+
+      return tx.payment.upsert({
+        where: { entryId_month: { entryId: entry.id, month } },
+        update: { fromBalance: source === "balance", debtEntryId: debt?.id ?? null, chargeId },
+        create: {
+          entryId: entry.id,
+          month,
+          fromBalance: source === "balance",
+          debtEntryId: debt?.id ?? null,
+          chargeId,
         },
       });
-      chargeId = charge.id;
-    }
-
-    const payment = await prisma.payment.upsert({
-      where: { entryId_month: { entryId: entry.id, month } },
-      update: { fromBalance: source === "balance", debtEntryId: debt?.id ?? null, chargeId },
-      create: {
-        entryId: entry.id,
-        month,
-        fromBalance: source === "balance",
-        debtEntryId: debt?.id ?? null,
-        chargeId,
-      },
     });
     return NextResponse.json(payment);
   } catch (e: any) {
@@ -87,8 +88,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
 }
 
 export async function DELETE(req: Request, { params }: { params: { id: string } }) {
-  const session = await getServerSession(authOptions);
-  const userId = (session?.user as any)?.id as string | undefined;
+  const userId = await currentUserId();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const entry = await ownedEntry(params.id, userId);
@@ -96,11 +96,13 @@ export async function DELETE(req: Request, { params }: { params: { id: string } 
 
   try {
     const { month } = monthSchema.parse(await req.json());
-    const existing = await prisma.payment.findUnique({
-      where: { entryId_month: { entryId: entry.id, month } },
+    await prisma.$transaction(async (tx) => {
+      const existing = await tx.payment.findUnique({
+        where: { entryId_month: { entryId: entry.id, month } },
+      });
+      await dropCharge(tx, existing?.chargeId);
+      await tx.payment.deleteMany({ where: { entryId: entry.id, month } });
     });
-    await dropCharge(existing?.chargeId);
-    await prisma.payment.deleteMany({ where: { entryId: entry.id, month } });
     return NextResponse.json({ ok: true });
   } catch (e: any) {
     return NextResponse.json({ error: e.message ?? "Invalid" }, { status: 400 });

@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
 import { z } from "zod";
-import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { currentUserId } from "@/lib/session";
 
 // ISO 4217 codes are three uppercase letters; validate the shape and then
 // confirm Intl actually knows how to format it before storing.
@@ -21,8 +20,7 @@ const schema = z.object({
 });
 
 export async function PATCH(req: Request) {
-  const session = await getServerSession(authOptions);
-  const userId = (session?.user as any)?.id as string | undefined;
+  const userId = await currentUserId();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {

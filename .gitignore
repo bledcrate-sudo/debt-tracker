@@ -17,3 +17,6 @@ DerivedData/
 *.xcuserstate
 .vercel
 .env*
+!.env.example
+*.ipa
+*.tsbuildinfo

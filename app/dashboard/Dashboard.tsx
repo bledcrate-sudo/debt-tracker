@@ -1,101 +1,33 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { signOut } from "next-auth/react";
+import {
+  type EntryType,
+  type PaySource,
+  type Entry,
+  type Formatter,
+  type SimDebt,
+  makeFmt,
+  allCurrencies,
+  currencyName,
+  currencySymbol,
+  pct,
+  monthKey,
+  shiftMonth,
+  monthDisplay,
+  daysUntilDue,
+  paidSinceLastDue,
+  bornIn,
+  activeIn,
+  simulatePayoff,
+  monthLabel,
+  buildSuggestions,
+} from "./lib";
 
-type EntryType = "income" | "expense" | "purchase" | "debt";
-type PaySource = "balance" | "off" | "debt";
-
-type Entry = {
-  id: string;
-  type: string;
-  label: string;
-  amount: number;
-  frequency: string;
-  apr?: number | null;
-  minPayment?: number | null;
-  dueDay?: number | null;
-  sourceKind?: string | null;
-  debtEntryId?: string | null;
-  note: string | null;
-  createdAt: string;
-  payments: { month: string; fromBalance: boolean; debtEntryId?: string | null }[];
-  debtPayments: { id: string; amount: number; kind: string; fromBalance: boolean; note: string | null; paidAt: string }[];
-  originalAmount?: number;
-  paidSoFar?: number;
-  chargedSoFar?: number;
-};
-
-// Set once per render from the user's saved preference, so every fmt() call
-// below (including the ones inside subcomponents) formats in their currency.
-let activeCurrency = "USD";
-
-const fmt = (n: number) => {
-  try {
-    return n.toLocaleString(undefined, {
-      style: "currency",
-      currency: activeCurrency,
-      maximumFractionDigits: 2,
-    });
-  } catch {
-    return n.toLocaleString(undefined, { style: "currency", currency: "USD" });
-  }
-};
-
-const CURRENCY_FALLBACK = [
-  "USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "CNY", "INR", "BRL",
-  "MXN", "ZAR", "SEK", "NOK", "DKK", "PLN", "TRY", "RUB", "KRW", "SGD",
-  "HKD", "NZD", "AED", "SAR", "EGP", "NGN", "KES", "MAD", "TND", "DZD",
-  "ILS", "THB", "IDR", "MYR", "PHP", "VND", "PKR", "BDT", "LKR", "CZK",
-  "HUF", "RON", "UAH", "CLP", "COP", "ARS", "PEN", "TWD", "QAR", "KWD",
-];
-
-const allCurrencies = (): string[] => {
-  const supported = (Intl as any).supportedValuesOf;
-  if (typeof supported === "function") {
-    try {
-      return supported.call(Intl, "currency") as string[];
-    } catch {
-      /* fall through */
-    }
-  }
-  return CURRENCY_FALLBACK;
-};
-
-const currencyName = (code: string) => {
-  try {
-    const dn = new Intl.DisplayNames(undefined, { type: "currency" });
-    return dn.of(code) ?? code;
-  } catch {
-    return code;
-  }
-};
-
-const currencySymbol = (code: string) => {
-  try {
-    const parts = new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency: code,
-    }).formatToParts(0);
-    return parts.find((p) => p.type === "currency")?.value ?? code;
-  } catch {
-    return code;
-  }
-};
-
-const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
-
-const monthKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-
-const shiftMonth = (key: string, delta: number) => {
-  const [y, m] = key.split("-").map(Number);
-  const d = new Date(y, m - 1 + delta, 1);
-  return monthKey(d);
-};
-
-const monthDisplay = (key: string) => {
-  const [y, m] = key.split("-").map(Number);
-  return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
-};
+// Provided by Dashboard so every subcomponent formats in the signed-in user's
+// currency without threading a prop through each one; the default here only
+// covers a component rendered outside that provider (shouldn't happen).
+const CurrencyContext = createContext<Formatter>(makeFmt("USD"));
 
 function useEscapeClose(onClose: () => void) {
   useEffect(() => {
@@ -106,14 +38,6 @@ function useEscapeClose(onClose: () => void) {
     return () => window.removeEventListener("keydown", handler);
   }, [onClose]);
 }
-
-const daysUntilDue = (dueDay: number) => {
-  const now = new Date();
-  const today = now.getDate();
-  if (dueDay >= today) return dueDay - today;
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  return daysInMonth - today + dueDay;
-};
 
 export default function Dashboard({
   initialEntries,
@@ -128,7 +52,22 @@ export default function Dashboard({
 }) {
   const [currency, setCurrency] = useState(userCurrency);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  activeCurrency = currency;
+  const fmt = useMemo(() => makeFmt(currency), [currency]);
+
+  // The iOS build is a thin webview over the deployed site with no offline
+  // cache, so losing the network mid-session otherwise fails silently.
+  const [isOffline, setIsOffline] = useState(false);
+  useEffect(() => {
+    setIsOffline(!navigator.onLine);
+    const goOnline = () => setIsOffline(false);
+    const goOffline = () => setIsOffline(true);
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+    };
+  }, []);
 
   const [entries, setEntries] = useState<Entry[]>(initialEntries);
   const [modalType, setModalType] = useState<EntryType | null>(null);
@@ -149,6 +88,17 @@ export default function Dashboard({
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
   const [payBusy, setPayBusy] = useState<string | null>(null);
   const [payPrompt, setPayPrompt] = useState<{ id: string; label: string; amount: number } | null>(null);
+
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  useEffect(() => {
+    if (!errorMsg) return;
+    const t = setTimeout(() => setErrorMsg(null), 7000);
+    return () => clearTimeout(t);
+  }, [errorMsg]);
+  async function reportError(r: Response, fallback: string) {
+    const body = await r.json().catch(() => null);
+    setErrorMsg((body && typeof body.error === "string" && body.error) || fallback);
+  }
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -173,7 +123,7 @@ export default function Dashboard({
       body: JSON.stringify({ month: selectedMonth }),
     });
     setPayBusy(null);
-    if (!r.ok) return alert("Failed to update paid status");
+    if (!r.ok) return reportError(r, "Failed to update paid status");
     // Undoing a card payment also drops the debt charge server-side.
     if (wasOnCard) return refreshEntries();
     setEntries((cur) =>
@@ -192,7 +142,7 @@ export default function Dashboard({
       body: JSON.stringify({ month: selectedMonth, source, debtEntryId }),
     });
     setPayBusy(null);
-    if (!r.ok) return alert("Failed to update paid status");
+    if (!r.ok) return reportError(r, "Failed to update paid status");
     // Charging a bill to a card creates a debt charge server-side, so pull the
     // fresh entry list rather than trying to mirror both writes by hand.
     if (source === "debt") return refreshEntries();
@@ -213,7 +163,7 @@ export default function Dashboard({
 
   async function refreshEntries() {
     const r = await fetch("/api/entries");
-    if (!r.ok) return;
+    if (!r.ok) return reportError(r, "Failed to refresh — your last change may not be reflected yet");
     setEntries(await r.json());
   }
 
@@ -245,7 +195,7 @@ export default function Dashboard({
       body: JSON.stringify({ amount, kind, fromBalance, note }),
     });
     setDebtPayBusy(false);
-    if (!r.ok) return alert("Failed to log payment");
+    if (!r.ok) return reportError(r, "Failed to log payment");
     const created = await r.json();
     setEntries((cur) =>
       cur.map((e) => (e.id !== entryId ? e : { ...e, debtPayments: [created, ...e.debtPayments] }))
@@ -254,7 +204,7 @@ export default function Dashboard({
 
   async function undoDebtPayment(entryId: string, paymentId: string) {
     const r = await fetch(`/api/entries/${entryId}/debt-payments/${paymentId}`, { method: "DELETE" });
-    if (!r.ok) return alert("Failed to undo payment");
+    if (!r.ok) return reportError(r, "Failed to undo payment");
     setEntries((cur) =>
       cur.map((e) =>
         e.id !== entryId ? e : { ...e, debtPayments: e.debtPayments.filter((p) => p.id !== paymentId) }
@@ -265,6 +215,16 @@ export default function Dashboard({
   const income = useMemo(() => entries.filter((e) => e.type === "income"), [entries]);
   const expenses = useMemo(() => entries.filter((e) => e.type === "expense"), [entries]);
   const purchases = useMemo(() => entries.filter((e) => e.type === "purchase"), [entries]);
+  // What actually applies to the selected month, so the category tables list
+  // the same entries their header totals are summed from.
+  const monthIncome = useMemo(
+    () => income.filter((e) => activeIn(e, selectedMonth)),
+    [income, selectedMonth]
+  );
+  const monthExpenses = useMemo(
+    () => expenses.filter((e) => activeIn(e, selectedMonth)),
+    [expenses, selectedMonth]
+  );
   const debts = useMemo(() => {
     return entries
       .filter((e) => e.type === "debt")
@@ -298,10 +258,6 @@ export default function Dashboard({
     const months: string[] = [];
     for (let m = startMonth; m <= currentMonth; m = shiftMonth(m, 1)) months.push(m);
 
-    const bornIn = (e: Entry) => monthKey(new Date(e.createdAt));
-    const activeIn = (e: Entry, month: string) =>
-      e.frequency === "monthly" ? bornIn(e) <= month : bornIn(e) === month;
-
     let carry = 0;
     return months.map((month) => {
       const inc = income.filter((e) => activeIn(e, month));
@@ -310,8 +266,13 @@ export default function Dashboard({
       // One-off entries are settled the month they're logged; recurring ones
       // only count once they're actually marked received / paid.
       const settled = (e: Entry) => e.frequency !== "monthly" || gotPaid(e);
+      // Monthly bills track their source per-month via Payment.fromBalance;
+      // one-off bills are settled at creation, so they use their own
+      // sourceKind the same way purchases do.
       const fromBalance = (e: Entry) =>
-        e.frequency !== "monthly" || e.payments.some((p) => p.month === month && p.fromBalance);
+        e.frequency === "monthly"
+          ? e.payments.some((p) => p.month === month && p.fromBalance)
+          : (e.sourceKind ?? "balance") === "balance";
 
       const expectedIncome = sumBy(inc);
       const receivedIncome = sumBy(inc, settled);
@@ -372,12 +333,20 @@ export default function Dashboard({
   );
   const balance = monthRow?.closing ?? 0;
   const monthlySurplus = monthRow?.available ?? 0;
-  const monthlyIncome = monthRow?.receivedIncome ?? 0;
+  const expectedIncome = monthRow?.expectedIncome ?? 0;
   const totalIncome = monthRow?.receivedIncome ?? 0;
   const totalExpense = monthRow?.billsDue ?? 0;
   const totalPurchases = monthRow?.purchaseTotal ?? 0;
-  const dti = monthlyIncome > 0 ? totalDebt / (monthlyIncome * 12) : 0;
+  // DTI reflects income capacity, not whether this month's paycheck has
+  // been ticked "received" yet, so it's keyed off expected income.
+  const dti = expectedIncome > 0 ? totalDebt / (expectedIncome * 12) : 0;
   const monthlyToDebt = Math.max(0, monthlySurplus * (payoutPct / 100));
+  // The simulation below pays every debt's minimum on top of monthlyToDebt,
+  // so the real monthly outlay is the two combined, not monthlyToDebt alone.
+  const totalMinPayments = useMemo(
+    () => debts.reduce((s, d) => s + (d.minPayment ?? 0), 0),
+    [debts]
+  );
 
   // Amortization simulation: minimums on every debt, extra rolls into the
   // target debt, freed minimums snowball forward, interest accrues monthly.
@@ -420,7 +389,7 @@ export default function Dashboard({
       body: JSON.stringify(payload),
     });
     setBusy(false);
-    if (!r.ok) return alert("Failed to add entry");
+    if (!r.ok) return reportError(r, "Failed to add entry");
     const created: Entry = await r.json();
     setModalType(null);
     // Buying on a card also raises a charge on that debt server-side.
@@ -429,17 +398,48 @@ export default function Dashboard({
   }
 
   async function deleteEntry(id: string) {
-    if (!confirm("Delete this entry?")) return;
-    const hadCharge = !!entries.find((e) => e.id === id)?.debtEntryId;
+    const target = entries.find((e) => e.id === id);
+    const chargedCount =
+      target?.type === "debt" ? entries.filter((e) => e.debtEntryId === id).length : 0;
+    const message =
+      chargedCount > 0
+        ? `${chargedCount} purchase${chargedCount === 1 ? "" : "s"}/bill${chargedCount === 1 ? "" : "s"} ${
+            chargedCount === 1 ? "is" : "are"
+          } charged to this debt. Deleting it will unlink ${chargedCount === 1 ? "that entry" : "those entries"} from it (they stay, but no longer show as "On card"). Continue?`
+        : "Delete this entry?";
+    if (!confirm(message)) return;
+    const hadCharge = !!target?.debtEntryId;
     const r = await fetch(`/api/entries/${id}`, { method: "DELETE" });
-    if (!r.ok) return alert("Failed to delete");
+    if (!r.ok) return reportError(r, "Failed to delete");
     // Deleting a card purchase drops its debt charge too.
     if (hadCharge) return refreshEntries();
     setEntries((cur) => cur.filter((e) => e.id !== id));
   }
 
+  const [editEntry, setEditEntry] = useState<Entry | null>(null);
+  const [editBusy, setEditBusy] = useState(false);
+
+  async function updateEntry(
+    id: string,
+    patch: { label: string; amount: number; note: string | null; apr?: number | null; minPayment?: number | null; dueDay?: number | null }
+  ) {
+    setEditBusy(true);
+    const r = await fetch(`/api/entries/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    setEditBusy(false);
+    if (!r.ok) return reportError(r, "Failed to save changes");
+    const updated = await r.json();
+    setEditEntry(null);
+    setEntries((cur) => cur.map((e) => (e.id === id ? { ...e, ...updated } : e)));
+  }
+
   const suggestions = buildSuggestions({
+    fmt,
     totalIncome,
+    expectedIncome,
     totalExpense,
     totalDebt,
     surplus: monthlySurplus,
@@ -451,7 +451,31 @@ export default function Dashboard({
   });
 
   return (
+    <CurrencyContext.Provider value={fmt}>
     <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-8">
+      {isOffline && (
+        <div
+          role="status"
+          className="fixed top-4 left-1/2 -translate-x-1/2 z-[60] max-w-md w-[calc(100%-2rem)] bg-amber-500/15 border border-amber-500/40 text-amber-200 rounded-xl px-4 py-3 shadow-2xl text-sm text-center"
+        >
+          You're offline — changes won't save until your connection comes back.
+        </div>
+      )}
+      {errorMsg && (
+        <div
+          role="alert"
+          className="fixed top-4 left-1/2 -translate-x-1/2 z-[60] max-w-md w-[calc(100%-2rem)] bg-rose-500/15 border border-rose-500/40 text-rose-200 rounded-xl px-4 py-3 shadow-2xl flex items-start gap-3"
+        >
+          <span className="flex-1 text-sm">{errorMsg}</span>
+          <button
+            onClick={() => setErrorMsg(null)}
+            aria-label="Dismiss"
+            className="text-rose-300 hover:text-white shrink-0"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold">
@@ -605,10 +629,11 @@ export default function Dashboard({
         <CategoryTable
           title="Income"
           color="emerald"
-          rows={income}
+          rows={monthIncome}
           total={totalIncome}
           onAdd={() => setModalType("income")}
           onDelete={deleteEntry}
+          onEdit={setEditEntry}
           selectedMonth={selectedMonth}
           onTogglePaid={(id, paid) => toggleReceived(id, paid)}
           payBusy={payBusy}
@@ -617,10 +642,11 @@ export default function Dashboard({
         <CategoryTable
           title="Bills"
           color="rose"
-          rows={expenses}
+          rows={monthExpenses}
           total={totalExpense}
           onAdd={() => setModalType("expense")}
           onDelete={deleteEntry}
+          onEdit={setEditEntry}
           selectedMonth={selectedMonth}
           onTogglePaid={togglePaid}
           payBusy={payBusy}
@@ -632,6 +658,7 @@ export default function Dashboard({
           total={totalPurchases}
           onAdd={() => setModalType("purchase")}
           onDelete={deleteEntry}
+          onEdit={setEditEntry}
         />
         <CategoryTable
           title="Debt"
@@ -640,6 +667,7 @@ export default function Dashboard({
           total={totalDebt}
           onAdd={() => setModalType("debt")}
           onDelete={deleteEntry}
+          onEdit={(d) => setEditEntry({ ...d, amount: d.originalAmount ?? d.amount })}
           showShare
           onLogPayment={(id, label) => setDebtModal({ id, label })}
         />
@@ -662,10 +690,10 @@ export default function Dashboard({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800">
-            <SumRow label="Income" count={income.length} total={totalIncome} pctOfIncome={1} color="emerald" />
+            <SumRow label="Income" count={monthIncome.length} total={totalIncome} pctOfIncome={1} color="emerald" />
             <SumRow
               label="Bills"
-              count={expenses.length}
+              count={monthExpenses.length}
               total={-totalExpense}
               pctOfIncome={totalIncome ? -totalExpense / totalIncome : 0}
               color="rose"
@@ -760,7 +788,11 @@ export default function Dashboard({
         )}
 
         <div className="grid sm:grid-cols-4 gap-3 mb-5">
-          <MiniStat label="Apply to debt / mo" value={fmt(monthlyToDebt)} />
+          <MiniStat
+            label="Total to debt / mo"
+            value={fmt(monthlyToDebt + totalMinPayments)}
+            sub={totalMinPayments > 0 ? `${fmt(totalMinPayments)} minimums + ${fmt(monthlyToDebt)} extra` : undefined}
+          />
           <MiniStat
             label="Debt-free date"
             value={monthsToClear === Infinity ? "∞" : monthsToClear === 0 ? "Now" : monthLabel(monthsToClear)}
@@ -960,7 +992,17 @@ export default function Dashboard({
           />
         );
       })()}
+
+      {editEntry && (
+        <EditEntryModal
+          entry={editEntry}
+          busy={editBusy}
+          onClose={() => setEditEntry(null)}
+          onSubmit={(patch) => updateEntry(editEntry.id, patch)}
+        />
+      )}
     </main>
+    </CurrencyContext.Provider>
   );
 }
 
@@ -973,6 +1015,7 @@ function CategoryTable({
   total,
   onAdd,
   onDelete,
+  onEdit,
   showShare,
   selectedMonth,
   onTogglePaid,
@@ -986,6 +1029,7 @@ function CategoryTable({
   total: number;
   onAdd: () => void;
   onDelete: (id: string) => void;
+  onEdit: (entry: Entry) => void;
   showShare?: boolean;
   selectedMonth?: string;
   onTogglePaid?: (id: string, paid: boolean, label: string, amount: number) => void;
@@ -993,6 +1037,7 @@ function CategoryTable({
   onLogPayment?: (id: string, label: string) => void;
   paidLabels?: { header: string; yes: string; no: string };
 }) {
+  const fmt = useContext(CurrencyContext);
   const marks = paidLabels ?? { header: "Paid", yes: "✓ Paid", no: "Mark paid" };
   const map = {
     emerald: { bar: "bg-emerald-500", text: "text-emerald-400", chip: "bg-emerald-500/15 border-emerald-500/30", btn: "bg-emerald-500 hover:bg-emerald-400 text-slate-950" },
@@ -1055,17 +1100,33 @@ function CategoryTable({
                         )}
                       </>
                     ) : (
-                      <span
-                        className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${
-                          e.frequency === "monthly"
-                            ? "bg-sky-500/20 text-sky-300 border border-sky-500/30"
-                            : "bg-slate-700/50 text-slate-400 border border-slate-600/40"
-                        }`}
-                      >
-                        {e.frequency === "monthly" ? "Monthly" : "Once"}
-                      </span>
+                      <>
+                        <span
+                          className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                            e.frequency === "monthly"
+                              ? "bg-sky-500/20 text-sky-300 border border-sky-500/30"
+                              : "bg-slate-700/50 text-slate-400 border border-slate-600/40"
+                          }`}
+                        >
+                          {e.frequency === "monthly" ? "Monthly" : "Once"}
+                        </span>
+                        {e.sourceKind === "debt" && (
+                          <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                            On card
+                          </span>
+                        )}
+                        {e.sourceKind === "off" && (
+                          <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-700/50 text-slate-400 border border-slate-600/40">
+                            Off balance
+                          </span>
+                        )}
+                      </>
                     )}
-                    {onLogPayment && e.dueDay != null && e.amount > 0 && daysUntilDue(e.dueDay) <= 7 && (
+                    {onLogPayment &&
+                      e.dueDay != null &&
+                      e.amount > 0 &&
+                      daysUntilDue(e.dueDay) <= 7 &&
+                      !paidSinceLastDue(e.dueDay, e.debtPayments) && (
                       <span
                         className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border ${
                           daysUntilDue(e.dueDay) === 0
@@ -1127,9 +1188,18 @@ function CategoryTable({
                       </button>
                     )}
                     <button
+                      onClick={() => onEdit(e)}
+                      className="text-slate-500 hover:text-emerald-400"
+                      title="Edit"
+                      aria-label={`Edit ${e.label}`}
+                    >
+                      ✎
+                    </button>
+                    <button
                       onClick={() => onDelete(e.id)}
                       className="text-slate-500 hover:text-rose-400"
                       title="Delete"
+                      aria-label={`Delete ${e.label}`}
                     >
                       ✕
                     </button>
@@ -1183,6 +1253,7 @@ function LedgerBit({
   tone: "slate" | "emerald" | "rose" | "amber" | "sky" | "violet";
   strong?: boolean;
 }) {
+  const fmt = useContext(CurrencyContext);
   const colors = {
     slate: "text-slate-300 border-slate-700",
     emerald: "text-emerald-300 border-emerald-500/30",
@@ -1199,11 +1270,12 @@ function LedgerBit({
   );
 }
 
-function MiniStat({ label, value }: { label: string; value: string }) {
+function MiniStat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-3">
       <p className="text-xs uppercase tracking-wider text-slate-500">{label}</p>
       <p className="text-xl font-bold tabular-nums mt-1">{value}</p>
+      {sub && <p className="text-[11px] text-slate-500 mt-0.5">{sub}</p>}
     </div>
   );
 }
@@ -1223,6 +1295,7 @@ function SumRow({
   color: "emerald" | "rose" | "amber" | "violet";
   note?: string;
 }) {
+  const fmt = useContext(CurrencyContext);
   const map = {
     emerald: "text-emerald-400",
     rose: "text-rose-400",
@@ -1237,6 +1310,84 @@ function SumRow({
       <td className="px-5 py-3 text-right hidden sm:table-cell text-slate-400">{pct(pctOfIncome)}</td>
       <td className="px-5 py-3 hidden md:table-cell text-slate-500">{note ?? ""}</td>
     </tr>
+  );
+}
+
+function SourcePicker({
+  source,
+  setSource,
+  debts,
+  debtEntryId,
+  setDebtEntryId,
+}: {
+  source: PaySource;
+  setSource: (s: PaySource) => void;
+  debts: { id: string; label: string; amount: number }[];
+  debtEntryId: string;
+  setDebtEntryId: (id: string) => void;
+}) {
+  const fmt = useContext(CurrencyContext);
+  return (
+    <div>
+      <label className="block text-xs uppercase tracking-wider text-slate-400 mb-2">Paid with</label>
+      <div className="grid grid-cols-3 gap-2">
+        <button
+          type="button"
+          onClick={() => setSource("balance")}
+          className={`px-2 py-2.5 rounded-xl border text-sm font-medium transition ${
+            source === "balance"
+              ? "bg-emerald-500/20 border-emerald-500 text-emerald-200"
+              : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+          }`}
+        >
+          Balance
+        </button>
+        <button
+          type="button"
+          onClick={() => setSource("off")}
+          className={`px-2 py-2.5 rounded-xl border text-sm font-medium transition ${
+            source === "off"
+              ? "bg-slate-600/40 border-slate-500 text-white"
+              : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+          }`}
+        >
+          Off balance
+        </button>
+        <button
+          type="button"
+          disabled={debts.length === 0}
+          onClick={() => setSource("debt")}
+          className={`px-2 py-2.5 rounded-xl border text-sm font-medium transition disabled:opacity-40 ${
+            source === "debt"
+              ? "bg-amber-500/20 border-amber-500 text-amber-200"
+              : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+          }`}
+        >
+          Card
+        </button>
+      </div>
+      <p className="text-xs text-slate-500 mt-2">
+        {source === "balance"
+          ? "Comes straight out of your balance."
+          : source === "off"
+          ? "Paid with untracked money — balance unaffected."
+          : "Added to what you owe on the card — balance unaffected."}
+      </p>
+      {source === "debt" && (
+        <select
+          value={debtEntryId}
+          onChange={(e) => setDebtEntryId(e.target.value)}
+          className="w-full mt-2 px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-amber-500 outline-none"
+        >
+          <option value="">Choose a card or loan…</option>
+          {debts.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.label} — {fmt(d.amount)} owed
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
   );
 }
 
@@ -1280,6 +1431,10 @@ function EntryModal({
     debt: { once: "Outstanding balance to pay off", monthly: "Recurring debt payment / installment" },
   };
 
+  // One-off bills are settled the moment they're logged, same as purchases,
+  // so they need the same "where did this come from" answer.
+  const tracksSource = type === "purchase" || (type === "expense" && frequency === "once");
+
   function submit(e: React.FormEvent) {
     e.preventDefault();
     const n = parseFloat(amount);
@@ -1287,14 +1442,14 @@ function EntryModal({
     const aprN = parseFloat(apr);
     const minN = parseFloat(minPayment);
     const dueN = parseInt(dueDay);
-    if (type === "purchase" && source === "debt" && !debtEntryId) return;
+    if (tracksSource && source === "debt" && !debtEntryId) return;
     onSubmit({
       type,
       label: label.trim(),
       amount: n,
       frequency,
-      source: type === "purchase" ? source : undefined,
-      debtEntryId: type === "purchase" && source === "debt" ? debtEntryId : undefined,
+      source: tracksSource ? source : undefined,
+      debtEntryId: tracksSource && source === "debt" ? debtEntryId : undefined,
       apr: type === "debt" && !isNaN(aprN) && aprN >= 0 ? aprN : undefined,
       minPayment: type === "debt" && !isNaN(minN) && minN > 0 ? minN : undefined,
       dueDay: type === "debt" && !isNaN(dueN) && dueN >= 1 && dueN <= 31 ? dueN : undefined,
@@ -1309,76 +1464,24 @@ function EntryModal({
     >
       <div
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={titles[type]}
         className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl"
       >
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-bold capitalize">{titles[type]}</h2>
-          <button onClick={onClose} className="text-slate-500 hover:text-white">✕</button>
+          <button onClick={onClose} aria-label="Close" className="text-slate-500 hover:text-white">✕</button>
         </div>
         <form onSubmit={submit} className="space-y-3">
           {type === "purchase" ? (
-            <div>
-              <label className="block text-xs uppercase tracking-wider text-slate-400 mb-2">
-                Paid with
-              </label>
-              <div className="grid grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setSource("balance")}
-                  className={`px-2 py-2.5 rounded-xl border text-sm font-medium transition ${
-                    source === "balance"
-                      ? "bg-emerald-500/20 border-emerald-500 text-emerald-200"
-                      : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
-                  }`}
-                >
-                  Balance
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSource("off")}
-                  className={`px-2 py-2.5 rounded-xl border text-sm font-medium transition ${
-                    source === "off"
-                      ? "bg-slate-600/40 border-slate-500 text-white"
-                      : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
-                  }`}
-                >
-                  Off balance
-                </button>
-                <button
-                  type="button"
-                  disabled={debts.length === 0}
-                  onClick={() => setSource("debt")}
-                  className={`px-2 py-2.5 rounded-xl border text-sm font-medium transition disabled:opacity-40 ${
-                    source === "debt"
-                      ? "bg-amber-500/20 border-amber-500 text-amber-200"
-                      : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
-                  }`}
-                >
-                  Card
-                </button>
-              </div>
-              <p className="text-xs text-slate-500 mt-2">
-                {source === "balance"
-                  ? "Comes straight out of your balance."
-                  : source === "off"
-                  ? "Paid with untracked money — balance unaffected."
-                  : "Added to what you owe on the card — balance unaffected."}
-              </p>
-              {source === "debt" && (
-                <select
-                  value={debtEntryId}
-                  onChange={(e) => setDebtEntryId(e.target.value)}
-                  className="w-full mt-2 px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-amber-500 outline-none"
-                >
-                  <option value="">Choose a card or loan…</option>
-                  {debts.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.label} — {fmt(d.amount)} owed
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
+            <SourcePicker
+              source={source}
+              setSource={setSource}
+              debts={debts}
+              debtEntryId={debtEntryId}
+              setDebtEntryId={setDebtEntryId}
+            />
           ) : (
           <div>
             <label className="block text-xs uppercase tracking-wider text-slate-400 mb-2">Frequency</label>
@@ -1408,6 +1511,15 @@ function EntryModal({
             </div>
             <p className="text-xs text-slate-500 mt-2">{hints[type][frequency]}</p>
           </div>
+          )}
+          {type === "expense" && frequency === "once" && (
+            <SourcePicker
+              source={source}
+              setSource={setSource}
+              debts={debts}
+              debtEntryId={debtEntryId}
+              setDebtEntryId={setDebtEntryId}
+            />
           )}
           <input
             autoFocus
@@ -1483,6 +1595,130 @@ function EntryModal({
   );
 }
 
+function EditEntryModal({
+  entry,
+  busy,
+  onClose,
+  onSubmit,
+}: {
+  entry: Entry;
+  busy: boolean;
+  onClose: () => void;
+  onSubmit: (patch: { label: string; amount: number; note: string | null; apr?: number | null; minPayment?: number | null; dueDay?: number | null }) => void;
+}) {
+  useEscapeClose(onClose);
+  const isDebt = entry.type === "debt";
+  const [label, setLabel] = useState(entry.label);
+  const [amount, setAmount] = useState(String(entry.amount));
+  const [note, setNote] = useState(entry.note ?? "");
+  const [apr, setApr] = useState(entry.apr != null ? String(entry.apr) : "");
+  const [minPayment, setMinPayment] = useState(entry.minPayment != null ? String(entry.minPayment) : "");
+  const [dueDay, setDueDay] = useState(entry.dueDay != null ? String(entry.dueDay) : "");
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    const n = parseFloat(amount);
+    if (!label.trim() || isNaN(n) || n <= 0) return;
+    const aprN = parseFloat(apr);
+    const minN = parseFloat(minPayment);
+    const dueN = parseInt(dueDay);
+    onSubmit({
+      label: label.trim(),
+      amount: n,
+      note: note.trim() || null,
+      apr: isDebt ? (!isNaN(aprN) && aprN >= 0 ? aprN : null) : undefined,
+      minPayment: isDebt ? (!isNaN(minN) && minN > 0 ? minN : null) : undefined,
+      dueDay: isDebt ? (!isNaN(dueN) && dueN >= 1 && dueN <= 31 ? dueN : null) : undefined,
+    });
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm grid place-items-center z-50 p-4" onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Edit ${entry.label}`}
+        className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl"
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-bold">Edit {entry.type === "debt" ? "debt" : entry.type}</h2>
+          <button onClick={onClose} aria-label="Close" className="text-slate-500 hover:text-white">✕</button>
+        </div>
+        <form onSubmit={submit} className="space-y-3">
+          <input
+            autoFocus
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-emerald-500 outline-none"
+          />
+          <div>
+            <input
+              type="number"
+              step="0.01"
+              min="0.01"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-emerald-500 outline-none"
+            />
+            {isDebt && (
+              <p className="text-xs text-slate-500 mt-2">
+                This is the starting balance the payoff plan measures progress against — editing it
+                doesn't change what's currently owed; log a payment or card usage for that.
+              </p>
+            )}
+          </div>
+          {isDebt && (
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="APR % (optional)"
+                value={apr}
+                onChange={(e) => setApr(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-amber-500 outline-none"
+              />
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="Min payment / mo"
+                value={minPayment}
+                onChange={(e) => setMinPayment(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-amber-500 outline-none"
+              />
+              <input
+                type="number"
+                step="1"
+                min="1"
+                max="31"
+                placeholder="Due day (1–31)"
+                value={dueDay}
+                onChange={(e) => setDueDay(e.target.value)}
+                className="col-span-2 w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-amber-500 outline-none"
+              />
+            </div>
+          )}
+          <textarea
+            placeholder="Note (optional)"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            rows={2}
+            className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-emerald-500 outline-none resize-none"
+          />
+          <button
+            disabled={busy}
+            className="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold disabled:opacity-50"
+          >
+            {busy ? "Saving..." : "Save changes"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 function SettingsModal({
   currency,
   onClose,
@@ -1493,9 +1729,18 @@ function SettingsModal({
   onSaved: (code: string) => void;
 }) {
   useEscapeClose(onClose);
+  const [tab, setTab] = useState<"currency" | "password">("currency");
   const [picked, setPicked] = useState(currency);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [pwBusy, setPwBusy] = useState(false);
+  const [pwError, setPwError] = useState<string | null>(null);
+  const [pwSuccess, setPwSuccess] = useState(false);
 
   const options = useMemo(() => {
     const codes = allCurrencies();
@@ -1510,70 +1755,163 @@ function SettingsModal({
 
   async function save() {
     setBusy(true);
+    setError(null);
     const r = await fetch("/api/settings", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ currency: picked }),
     });
     setBusy(false);
-    if (!r.ok) return alert("Failed to save currency");
+    if (!r.ok) {
+      const body = await r.json().catch(() => null);
+      return setError(body?.error ?? "Failed to save currency");
+    }
     onSaved(picked);
+  }
+
+  async function changePassword(e: React.FormEvent) {
+    e.preventDefault();
+    setPwError(null);
+    setPwSuccess(false);
+    if (newPassword.length < 6) return setPwError("New password must be at least 6 characters");
+    if (newPassword !== confirmPassword) return setPwError("New passwords don't match");
+    setPwBusy(true);
+    const r = await fetch("/api/settings/password", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+    setPwBusy(false);
+    if (!r.ok) {
+      const body = await r.json().catch(() => null);
+      return setPwError(body?.error ?? "Failed to change password");
+    }
+    setCurrentPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setPwSuccess(true);
   }
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm grid place-items-center z-50 p-4" onClick={onClose}>
       <div
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Settings"
         className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md shadow-2xl flex flex-col max-h-[85vh]"
       >
         <div className="p-6 pb-3 shrink-0">
-          <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center justify-between mb-3">
             <h2 className="text-xl font-bold">Settings</h2>
-            <button onClick={onClose} className="text-slate-500 hover:text-white text-lg leading-none p-1">✕</button>
+            <button onClick={onClose} aria-label="Close" className="text-slate-500 hover:text-white text-lg leading-none p-1">✕</button>
           </div>
-          <p className="text-slate-400 text-sm mb-4">
-            Currency — everything is displayed in {currencySymbol(picked)} {picked}.
-          </p>
-          <input
-            autoFocus
-            placeholder="Search currency (e.g. euro, CAD)"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-emerald-500 outline-none"
-          />
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-6 space-y-1 min-h-0">
-          {shown.length === 0 && <p className="text-sm text-slate-500 italic py-4">No currency matches that.</p>}
-          {shown.map((o) => (
+          <div className="flex bg-slate-800 border border-slate-700 rounded-xl p-1">
             <button
-              key={o.code}
-              onClick={() => setPicked(o.code)}
-              className={`w-full text-left px-4 py-3 rounded-xl border transition flex items-center gap-3 ${
-                picked === o.code
-                  ? "bg-emerald-500/15 border-emerald-500/50"
-                  : "bg-slate-800/60 border-slate-700/60 hover:border-slate-600"
+              onClick={() => setTab("currency")}
+              className={`flex-1 px-3 py-1.5 rounded-lg text-sm transition ${
+                tab === "currency" ? "bg-emerald-500 text-slate-950 font-semibold" : "text-slate-300"
               }`}
             >
-              <span className="w-12 shrink-0 font-semibold tabular-nums text-slate-300">{o.symbol}</span>
-              <span className="flex-1 min-w-0">
-                <span className="font-medium">{o.code}</span>
-                <span className="block text-xs text-slate-500 truncate">{o.name}</span>
-              </span>
-              {picked === o.code && <span className="text-emerald-400 shrink-0">✓</span>}
+              Currency
             </button>
-          ))}
+            <button
+              onClick={() => setTab("password")}
+              className={`flex-1 px-3 py-1.5 rounded-lg text-sm transition ${
+                tab === "password" ? "bg-emerald-500 text-slate-950 font-semibold" : "text-slate-300"
+              }`}
+            >
+              Password
+            </button>
+          </div>
         </div>
 
-        <div className="p-6 pt-4 shrink-0 border-t border-slate-800">
-          <button
-            onClick={save}
-            disabled={busy}
-            className="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold disabled:opacity-50"
-          >
-            {busy ? "Saving..." : "Save"}
-          </button>
-        </div>
+        {tab === "currency" ? (
+          <>
+            <div className="px-6 pb-3 shrink-0">
+              <p className="text-slate-400 text-sm mb-4">
+                Everything is displayed in {currencySymbol(picked)} {picked}.
+              </p>
+              <input
+                autoFocus
+                placeholder="Search currency (e.g. euro, CAD)"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-emerald-500 outline-none"
+              />
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-6 space-y-1 min-h-0">
+              {shown.length === 0 && <p className="text-sm text-slate-500 italic py-4">No currency matches that.</p>}
+              {shown.map((o) => (
+                <button
+                  key={o.code}
+                  onClick={() => setPicked(o.code)}
+                  className={`w-full text-left px-4 py-3 rounded-xl border transition flex items-center gap-3 ${
+                    picked === o.code
+                      ? "bg-emerald-500/15 border-emerald-500/50"
+                      : "bg-slate-800/60 border-slate-700/60 hover:border-slate-600"
+                  }`}
+                >
+                  <span className="w-12 shrink-0 font-semibold tabular-nums text-slate-300">{o.symbol}</span>
+                  <span className="flex-1 min-w-0">
+                    <span className="font-medium">{o.code}</span>
+                    <span className="block text-xs text-slate-500 truncate">{o.name}</span>
+                  </span>
+                  {picked === o.code && <span className="text-emerald-400 shrink-0">✓</span>}
+                </button>
+              ))}
+            </div>
+
+            <div className="p-6 pt-4 shrink-0 border-t border-slate-800">
+              {error && <p className="text-rose-400 text-sm mb-3">{error}</p>}
+              <button
+                onClick={save}
+                disabled={busy}
+                className="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold disabled:opacity-50"
+              >
+                {busy ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </>
+        ) : (
+          <form onSubmit={changePassword} className="p-6 pt-3 space-y-3 overflow-y-auto">
+            <input
+              autoFocus
+              type="password"
+              required
+              placeholder="Current password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-emerald-500 outline-none"
+            />
+            <input
+              type="password"
+              required
+              minLength={6}
+              placeholder="New password (min 6 chars)"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-emerald-500 outline-none"
+            />
+            <input
+              type="password"
+              required
+              placeholder="Confirm new password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-emerald-500 outline-none"
+            />
+            {pwError && <p className="text-rose-400 text-sm">{pwError}</p>}
+            {pwSuccess && <p className="text-emerald-400 text-sm">Password changed.</p>}
+            <button
+              disabled={pwBusy}
+              className="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold disabled:opacity-50"
+            >
+              {pwBusy ? "Saving..." : "Change password"}
+            </button>
+          </form>
+        )}
       </div>
     </div>
   );
@@ -1595,19 +1933,23 @@ function PaySourceModal({
   onChoose: (source: PaySource, debtEntryId?: string) => void;
 }) {
   useEscapeClose(onClose);
+  const fmt = useContext(CurrencyContext);
   const [pickingDebt, setPickingDebt] = useState(false);
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm grid place-items-center z-50 p-4" onClick={onClose}>
       <div
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={pickingDebt ? "Which card or loan?" : `Mark "${label}" as paid`}
         className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl max-h-[85vh] overflow-y-auto"
       >
         <div className="flex items-center justify-between mb-1">
           <h2 className="text-xl font-bold">
             {pickingDebt ? "Which card or loan?" : `Mark "${label}" as paid`}
           </h2>
-          <button onClick={onClose} className="text-slate-500 hover:text-white">✕</button>
+          <button onClick={onClose} aria-label="Close" className="text-slate-500 hover:text-white">✕</button>
         </div>
         <p className="text-slate-400 text-sm mb-4">
           {pickingDebt
@@ -1694,6 +2036,7 @@ function DebtPaymentModal({
   onUndo: (paymentId: string) => void;
 }) {
   useEscapeClose(onClose);
+  const fmt = useContext(CurrencyContext);
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [kind, setKind] = useState<"payment" | "charge">("payment");
@@ -1712,11 +2055,14 @@ function DebtPaymentModal({
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm grid place-items-center z-50 p-4" onClick={onClose}>
       <div
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Payments — ${label}`}
         className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl max-h-[85vh] overflow-y-auto"
       >
         <div className="flex items-center justify-between mb-1">
           <h2 className="text-xl font-bold">Payments — {label}</h2>
-          <button onClick={onClose} className="text-slate-500 hover:text-white">✕</button>
+          <button onClick={onClose} aria-label="Close" className="text-slate-500 hover:text-white">✕</button>
         </div>
         <p className="text-slate-400 text-sm mb-4">
           {fmt(remaining)} remaining · started at {fmt(originalAmount)}
@@ -1844,77 +2190,6 @@ function DebtPaymentModal({
   );
 }
 
-/* ---------- helpers ---------- */
-
-type SimDebt = Entry & { originalAmount?: number; paidSoFar?: number; chargedSoFar?: number };
-
-// Amortization simulation: minimums on every debt, extra rolls into the
-// target debt, freed minimums snowball forward, interest accrues monthly.
-function simulatePayoff(debts: SimDebt[], strategy: "avalanche" | "snowball", extraPerMonth: number) {
-  const MAX_MONTHS = 600;
-  const order = [...debts].filter((d) => d.amount > 0);
-  if (strategy === "avalanche")
-    order.sort((a, b) => (b.apr ?? 0) - (a.apr ?? 0) || b.amount - a.amount);
-  else order.sort((a, b) => a.amount - b.amount);
-
-  const sim = order.map((d) => ({
-    id: d.id,
-    balance: d.amount,
-    apr: d.apr ?? 0,
-    min: d.minPayment ?? 0,
-    eta: Infinity as number,
-    interest: 0,
-  }));
-  const totalMin = sim.reduce((s, d) => s + d.min, 0);
-  const timeline: number[] = [sim.reduce((s, d) => s + d.balance, 0)];
-  let totalInterest = 0;
-  let month = 0;
-
-  while (sim.some((d) => d.balance > 0.005) && month < MAX_MONTHS) {
-    month++;
-    let extra =
-      extraPerMonth + totalMin - sim.filter((d) => d.balance > 0.005).reduce((s, d) => s + d.min, 0);
-    for (const d of sim) {
-      if (d.balance <= 0.005) continue;
-      const i = (d.balance * d.apr) / 1200;
-      d.balance += i;
-      d.interest += i;
-      totalInterest += i;
-    }
-    for (const d of sim) {
-      if (d.balance <= 0.005) continue;
-      const pay = Math.min(d.min, d.balance);
-      d.balance -= pay;
-      if (d.balance <= 0.005 && d.eta === Infinity) d.eta = month;
-    }
-    for (const d of sim) {
-      if (extra <= 0) break;
-      if (d.balance <= 0.005) continue;
-      const pay = Math.min(extra, d.balance);
-      d.balance -= pay;
-      extra -= pay;
-      if (d.balance <= 0.005 && d.eta === Infinity) d.eta = month;
-    }
-    timeline.push(sim.reduce((s, d) => s + d.balance, 0));
-    if (extraPerMonth + totalMin <= 0) break; // nothing being paid at all
-  }
-
-  const done = sim.every((d) => d.balance <= 0.005);
-  const byId = new Map(sim.map((d) => [d.id, d]));
-  return {
-    order: order.map((d) => {
-      const s = byId.get(d.id)!;
-      return { ...d, months: s.eta, eta: s.eta, interest: s.interest };
-    }),
-    monthsToClear:
-      done && month > 0
-        ? Math.max(...sim.map((d) => (d.eta === Infinity ? 0 : d.eta)), 0) || Infinity
-        : Infinity,
-    totalInterest: done ? totalInterest : Infinity,
-    timeline,
-  };
-}
-
 function PayoffChart({ timeline }: { timeline: number[] }) {
   if (timeline.length < 2) return null;
   const W = 600;
@@ -1938,101 +2213,3 @@ function PayoffChart({ timeline }: { timeline: number[] }) {
   );
 }
 
-function monthLabel(monthsFromNow: number) {
-  const d = new Date();
-  d.setMonth(d.getMonth() + monthsFromNow);
-  return d.toLocaleDateString(undefined, { month: "short", year: "numeric" });
-}
-
-type Suggestion = { title: string; body: string; tone: "good" | "warn" | "bad" };
-
-function buildSuggestions(ctx: {
-  totalIncome: number;
-  totalExpense: number;
-  totalDebt: number;
-  surplus: number;
-  dti: number;
-  monthsToClear: number;
-  debtCount: number;
-  biggestDebt: Entry | null;
-  smallestDebt: Entry | null;
-}): Suggestion[] {
-  const out: Suggestion[] = [];
-
-  if (ctx.totalIncome === 0) {
-    out.push({
-      title: "Add your income first",
-      body: "Log at least one income source so the planner can size your monthly contribution.",
-      tone: "warn",
-    });
-    return out;
-  }
-
-  if (ctx.surplus <= 0) {
-    out.push({
-      title: "You're spending more than you earn",
-      body: `Expenses exceed income by ${fmt(-ctx.surplus)}. Cut discretionary expenses before attacking debt — interest will outpace any progress.`,
-      tone: "bad",
-    });
-  } else {
-    out.push({
-      title: `Free cash flow: ${fmt(ctx.surplus)} / mo`,
-      body: `Strong base — apply at least 50% (${fmt(ctx.surplus * 0.5)}) to debt and the rest to savings/emergency fund.`,
-      tone: "good",
-    });
-  }
-
-  if (ctx.dti > 0.4) {
-    out.push({
-      title: `High debt-to-income (${pct(ctx.dti)})`,
-      body: "Above 40% is risky. Avoid taking on new credit. Consider consolidating high-interest debts into one lower-rate loan.",
-      tone: "bad",
-    });
-  } else if (ctx.dti > 0.2) {
-    out.push({
-      title: `Moderate DTI (${pct(ctx.dti)})`,
-      body: "Manageable but worth tightening. Snowball small debts first for quick wins, then pivot to avalanche.",
-      tone: "warn",
-    });
-  } else if (ctx.totalDebt > 0) {
-    out.push({
-      title: `Healthy DTI (${pct(ctx.dti)})`,
-      body: "You're in good shape. Stay consistent and you'll be debt-free fast.",
-      tone: "good",
-    });
-  }
-
-  if (ctx.biggestDebt && ctx.debtCount > 1) {
-    out.push({
-      title: `Avalanche target: ${ctx.biggestDebt.label}`,
-      body: `Largest balance at ${fmt(ctx.biggestDebt.amount)}. Throw extra payments here to kill the highest interest cost (assuming it's also the highest rate).`,
-      tone: "warn",
-    });
-  }
-  if (ctx.smallestDebt && ctx.debtCount > 1 && ctx.smallestDebt.id !== ctx.biggestDebt?.id) {
-    out.push({
-      title: `Snowball quick win: ${ctx.smallestDebt.label}`,
-      body: `Only ${fmt(ctx.smallestDebt.amount)} left. Clearing this first gives momentum and frees its minimum payment for the next debt.`,
-      tone: "good",
-    });
-  }
-
-  if (ctx.totalDebt > 0 && ctx.monthsToClear !== Infinity) {
-    const years = (ctx.monthsToClear / 12).toFixed(1);
-    out.push({
-      title: `Debt-free in ~${ctx.monthsToClear} months`,
-      body: `At your current contribution rate, you'll clear all debt in roughly ${years} years. Bump the slider to model faster payoff.`,
-      tone: "good",
-    });
-  }
-
-  if (ctx.totalDebt === 0 && ctx.totalIncome > 0) {
-    out.push({
-      title: "No debt logged — nice.",
-      body: "Redirect that surplus into an emergency fund (3–6 months of expenses), then index funds.",
-      tone: "good",
-    });
-  }
-
-  return out;
-}

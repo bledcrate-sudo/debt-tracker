@@ -28,30 +28,38 @@ model Entry {
   apr        Float?   // annual interest rate %, debts only
   minPayment Float?   // required minimum monthly payment, debts only
   dueDay     Int?     // day of month payment is due (1-31), debts only
-  // Purchases only: where the money came from. null behaves as "balance".
+  // Purchases/one-off bills only: where the money came from. null behaves as "balance".
   sourceKind  String? // "balance" | "off" | "debt"
   debtEntryId String? // the card/loan it went on, when sourceKind is "debt"
+  debtEntry   Entry?  @relation("EntryCharge", fields: [debtEntryId], references: [id], onDelete: SetNull)
+  // Reverse side: purchases/bills charged to this debt. Deleting the debt
+  // just clears their debtEntryId above rather than failing or cascading.
+  chargedEntries Entry[] @relation("EntryCharge")
   chargeId    String? // the DebtPayment charge raised for it, removed on delete
   note      String?
   createdAt DateTime  @default(now())
-  payments  Payment[]
+  payments  Payment[] @relation("PaymentEntry")
   debtPayments DebtPayment[]
+  chargedPayments Payment[] @relation("PaymentCharge")
 
   @@index([userId])
+  @@index([debtEntryId])
 }
 
 model Payment {
   id          String   @id @default(cuid())
   entryId     String
-  entry       Entry    @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  entry       Entry    @relation("PaymentEntry", fields: [entryId], references: [id], onDelete: Cascade)
   month       String   // "YYYY-MM"
   fromBalance Boolean  @default(true)
   debtEntryId String?  // set when the bill was put on a credit card / debt
+  debtEntry   Entry?   @relation("PaymentCharge", fields: [debtEntryId], references: [id], onDelete: SetNull)
   chargeId    String?  // the DebtPayment charge raised for it, removed on unpay
   paidAt      DateTime @default(now())
 
   @@unique([entryId, month])
   @@index([entryId])
+  @@index([debtEntryId])
 }
 
 model DebtPayment {

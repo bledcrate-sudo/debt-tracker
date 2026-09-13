@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
 import { z } from "zod";
-import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { currentUserId } from "@/lib/session";
+import { roundCents } from "@/lib/money";
 
 const createSchema = z.object({
   amount: z.number().finite().positive(),
@@ -18,8 +18,7 @@ async function ownedEntry(id: string, userId: string) {
 }
 
 export async function POST(req: Request, { params }: { params: { id: string } }) {
-  const session = await getServerSession(authOptions);
-  const userId = (session?.user as any)?.id as string | undefined;
+  const userId = await currentUserId();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const entry = await ownedEntry(params.id, userId);
@@ -30,7 +29,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     const payment = await prisma.debtPayment.create({
       data: {
         entryId: entry.id,
-        amount: data.amount,
+        amount: roundCents(data.amount),
         kind: data.kind,
         fromBalance: data.kind === "payment" ? data.fromBalance : false,
         note: data.note ?? null,

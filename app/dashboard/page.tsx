@@ -7,7 +7,7 @@ import Dashboard from "./Dashboard";
 export default async function DashboardPage() {
   const session = await getServerSession(authOptions);
   if (!session) redirect("/login");
-  const userId = (session.user as any).id as string;
+  const userId = session.user.id;
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { currency: true },
