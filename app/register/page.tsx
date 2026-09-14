@@ -63,7 +63,7 @@ export default function RegisterPage() {
           {err && <p className="text-rose-400 text-sm">{err}</p>}
           <button
             disabled={loading}
-            className="w-full py-3 rounded-xl bg-red-500 hover:bg-red-400 text-neutral-950 font-semibold transition disabled:opacity-50"
+            className="w-full py-3 rounded-xl bg-gradient-to-b from-red-500 to-red-600 hover:to-red-500 text-neutral-950 font-semibold shadow-lg shadow-red-950/50 transition disabled:opacity-50"
           >
             {loading ? "Creating..." : "Create account"}
           </button>

@@ -339,6 +339,7 @@ export default function Dashboard({
   // Amortization simulation: minimums on every debt, extra rolls into the
   // target debt, freed minimums snowball forward, interest accrues monthly.
   const [whatIfExtra, setWhatIfExtra] = useState(0);
+  const [showPlanDetails, setShowPlanDetails] = useState(false);
 
   const plan = useMemo(
     () => simulatePayoff(debts, strategy, monthlyToDebt),
@@ -548,45 +549,25 @@ export default function Dashboard({
           }
         />
         <StatCard label="Debt" value={fmt(totalDebt)} accent="maroon" />
-        <StatCard
-          label="Free to spend"
-          value={fmt(monthlySurplus)}
-          accent={monthlySurplus >= 0 ? "highlight" : "rose"}
-          sub={
-            monthRow && monthRow.billsUnpaid > 0
-              ? `After ${fmt(monthRow.billsUnpaid)} of bills left`
-              : "Bills covered — all yours"
-          }
-        />
+        <div className="col-span-2 md:col-span-1">
+          <StatCard
+            label="Free to spend"
+            value={fmt(monthlySurplus)}
+            accent={monthlySurplus >= 0 ? "highlight" : "rose"}
+            sub={
+              monthRow && monthRow.billsUnpaid > 0
+                ? `After ${fmt(monthRow.billsUnpaid)} of bills left`
+                : "Bills covered — all yours"
+            }
+          />
+        </div>
       </section>
 
-      {monthRow && (
-        <section className="bg-neutral-900/60 border border-neutral-800 rounded-2xl p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-bold">{monthDisplay(selectedMonth)} ledger</h2>
-            {monthRow.expectedIncome > monthRow.receivedIncome && (
-              <span className="text-xs px-2 py-0.5 rounded-full bg-red-400/15 text-red-300 border border-red-400/30">
-                {fmt(monthRow.expectedIncome - monthRow.receivedIncome)} income not received yet
-              </span>
-            )}
-          </div>
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-2 text-sm tabular-nums">
-            <LedgerBit label="Carried in" value={monthRow.carryIn} tone="neutral" />
-            <span className="text-neutral-600">+</span>
-            <LedgerBit label="Income received" value={monthRow.receivedIncome} tone="red" />
-            <span className="text-neutral-600">−</span>
-            <LedgerBit label="Bills paid" value={monthRow.spentFromBalance} tone="rose" />
-            <span className="text-neutral-600">−</span>
-            <LedgerBit label="Purchases" value={monthRow.purchaseSpend} tone="crimson" />
-            <span className="text-neutral-600">=</span>
-            <LedgerBit label="Left over" value={monthRow.closing} tone="highlight" strong />
-          </div>
-          <p className="text-xs text-neutral-500 mt-3">
-            Whatever's left rolls into {monthDisplay(shiftMonth(selectedMonth, 1))}. Mark income as
-            received when it actually lands — nothing counts until you confirm it. Debt is tracked
-            separately below and never affects this balance.
-          </p>
-        </section>
+      {monthRow && monthRow.expectedIncome > monthRow.receivedIncome && (
+        <p className="text-sm text-red-300 bg-red-400/10 border border-red-400/25 rounded-xl px-4 py-2.5">
+          {fmt(monthRow.expectedIncome - monthRow.receivedIncome)} income not received yet — mark it
+          received in the Income table once it lands.
+        </p>
       )}
 
       {milestone && (
@@ -774,7 +755,7 @@ export default function Dashboard({
           </p>
         )}
 
-        <div className="grid sm:grid-cols-4 gap-3 mb-5">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
           <MiniStat
             label="Total to debt / mo"
             value={fmt(monthlyToDebt + totalMinPayments)}
@@ -798,56 +779,67 @@ export default function Dashboard({
                 step={5}
                 value={payoutPct}
                 onChange={(e) => setPayoutPct(parseInt(e.target.value))}
-                className="flex-1 accent-rose-700"
+                className="flex-1 min-w-0 accent-rose-700"
               />
-              <span className="text-rose-400 font-semibold w-12 text-right tabular-nums">{payoutPct}%</span>
+              <span className="text-rose-400 font-semibold shrink-0 text-right tabular-nums">{payoutPct}%</span>
             </div>
           </div>
         </div>
 
         {debts.length > 0 && (
-          <div className="grid md:grid-cols-2 gap-3 mb-5">
-            <div className="bg-neutral-900/70 border border-neutral-800 rounded-xl p-3">
-              <p className="text-xs uppercase tracking-wider text-neutral-500 mb-2">
-                What if I paid more each month?
-              </p>
-              <div className="flex items-center gap-3">
-                <span className="text-neutral-400 text-sm">+</span>
-                <input
-                  type="number"
-                  min={0}
-                  step={10}
-                  value={whatIfExtra || ""}
-                  placeholder="0"
-                  onChange={(e) => setWhatIfExtra(Math.max(0, parseFloat(e.target.value) || 0))}
-                  className="w-24 px-3 py-1.5 rounded-lg bg-neutral-800 border border-neutral-700 focus:border-rose-700 outline-none text-sm tabular-nums"
-                />
-                <span className="text-neutral-400 text-sm">/mo extra</span>
+          <>
+            <button
+              onClick={() => setShowPlanDetails((v) => !v)}
+              className="text-sm text-neutral-400 hover:text-white mb-5 flex items-center gap-1.5"
+            >
+              <span className={`transition-transform ${showPlanDetails ? "rotate-90" : ""}`}>›</span>
+              {showPlanDetails ? "Hide" : "Show"} chart &amp; "what if" calculator
+            </button>
+            {showPlanDetails && (
+              <div className="grid md:grid-cols-2 gap-3 mb-5">
+                <div className="bg-neutral-900/70 border border-neutral-800 rounded-xl p-3">
+                  <p className="text-xs uppercase tracking-wider text-neutral-500 mb-2">
+                    What if I paid more each month?
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <span className="text-neutral-400 text-sm">+</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step={10}
+                      value={whatIfExtra || ""}
+                      placeholder="0"
+                      onChange={(e) => setWhatIfExtra(Math.max(0, parseFloat(e.target.value) || 0))}
+                      className="w-24 px-3 py-1.5 rounded-lg bg-neutral-800 border border-neutral-700 focus:border-rose-700 outline-none text-sm tabular-nums"
+                    />
+                    <span className="text-neutral-400 text-sm">/mo extra</span>
+                  </div>
+                  {whatIfPlan && plan.monthsToClear !== Infinity && whatIfPlan.monthsToClear !== Infinity && (
+                    <p className="text-sm mt-2 text-red-300">
+                      Debt-free {plan.monthsToClear - whatIfPlan.monthsToClear} month
+                      {plan.monthsToClear - whatIfPlan.monthsToClear === 1 ? "" : "s"} sooner, save{" "}
+                      {fmt(Math.max(0, plan.totalInterest - whatIfPlan.totalInterest))} in interest.
+                    </p>
+                  )}
+                  {whatIfPlan && plan.monthsToClear === Infinity && whatIfPlan.monthsToClear !== Infinity && (
+                    <p className="text-sm mt-2 text-red-300">
+                      That extra makes you debt-free in {whatIfPlan.monthsToClear} months — right now you never get there.
+                    </p>
+                  )}
+                </div>
+                <div className="bg-neutral-900/70 border border-neutral-800 rounded-xl p-3">
+                  <p className="text-xs uppercase tracking-wider text-neutral-500 mb-1">Balance over time</p>
+                  {plan.monthsToClear === Infinity ? (
+                    <p className="text-sm text-neutral-500 italic mt-2">
+                      Payments don't cover interest — balance never reaches zero. Raise the slider.
+                    </p>
+                  ) : (
+                    <PayoffChart timeline={(whatIfPlan ?? plan).timeline} />
+                  )}
+                </div>
               </div>
-              {whatIfPlan && plan.monthsToClear !== Infinity && whatIfPlan.monthsToClear !== Infinity && (
-                <p className="text-sm mt-2 text-red-300">
-                  Debt-free {plan.monthsToClear - whatIfPlan.monthsToClear} month
-                  {plan.monthsToClear - whatIfPlan.monthsToClear === 1 ? "" : "s"} sooner, save{" "}
-                  {fmt(Math.max(0, plan.totalInterest - whatIfPlan.totalInterest))} in interest.
-                </p>
-              )}
-              {whatIfPlan && plan.monthsToClear === Infinity && whatIfPlan.monthsToClear !== Infinity && (
-                <p className="text-sm mt-2 text-red-300">
-                  That extra makes you debt-free in {whatIfPlan.monthsToClear} months — right now you never get there.
-                </p>
-              )}
-            </div>
-            <div className="bg-neutral-900/70 border border-neutral-800 rounded-xl p-3">
-              <p className="text-xs uppercase tracking-wider text-neutral-500 mb-1">Balance over time</p>
-              {plan.monthsToClear === Infinity ? (
-                <p className="text-sm text-neutral-500 italic mt-2">
-                  Payments don't cover interest — balance never reaches zero. Raise the slider.
-                </p>
-              ) : (
-                <PayoffChart timeline={(whatIfPlan ?? plan).timeline} />
-              )}
-            </div>
-          </div>
+            )}
+          </>
         )}
 
         {debts.length === 0 ? (
@@ -1027,10 +1019,10 @@ function CategoryTable({
   const fmt = useContext(CurrencyContext);
   const marks = paidLabels ?? { header: "Paid", yes: "✓ Paid", no: "Mark paid" };
   const map = {
-    red: { bar: "bg-red-500", text: "text-red-400", chip: "bg-red-500/15 border-red-500/30", btn: "bg-red-500 hover:bg-red-400 text-neutral-950" },
-    rose: { bar: "bg-rose-500", text: "text-rose-400", chip: "bg-rose-500/15 border-rose-500/30", btn: "bg-rose-500 hover:bg-rose-400 text-white" },
-    maroon: { bar: "bg-rose-700", text: "text-rose-600", chip: "bg-rose-700/15 border-rose-700/30", btn: "bg-rose-700 hover:bg-rose-600 text-neutral-950" },
-    crimson: { bar: "bg-red-600", text: "text-red-500", chip: "bg-red-600/15 border-red-600/30", btn: "bg-red-600 hover:bg-red-500 text-white" },
+    red: { bar: "bg-red-500", text: "text-red-400", chip: "bg-red-500/15 border-red-500/30", btn: "bg-gradient-to-b from-red-500 to-red-600 hover:to-red-500 text-neutral-950 shadow-md shadow-red-950/40" },
+    rose: { bar: "bg-rose-500", text: "text-rose-400", chip: "bg-rose-500/15 border-rose-500/30", btn: "bg-gradient-to-b from-rose-500 to-rose-600 hover:to-rose-500 text-white shadow-md shadow-rose-950/40" },
+    maroon: { bar: "bg-rose-700", text: "text-rose-600", chip: "bg-rose-700/15 border-rose-700/30", btn: "bg-gradient-to-b from-rose-700 to-rose-800 hover:to-rose-700 text-neutral-950 shadow-md shadow-rose-950/40" },
+    crimson: { bar: "bg-red-600", text: "text-red-500", chip: "bg-red-600/15 border-red-600/30", btn: "bg-gradient-to-b from-red-600 to-red-700 hover:to-red-600 text-white shadow-md shadow-red-950/40" },
   }[color];
   return (
     <div className="bg-neutral-900/60 border border-neutral-800 rounded-2xl overflow-hidden flex flex-col">
@@ -1226,34 +1218,6 @@ function StatCard({
       <p className="text-2xl font-bold mt-2 tabular-nums text-white">{value}</p>
       {sub && <p className="text-xs text-neutral-400 mt-1">{sub}</p>}
     </div>
-  );
-}
-
-function LedgerBit({
-  label,
-  value,
-  tone,
-  strong,
-}: {
-  label: string;
-  value: number;
-  tone: "neutral" | "red" | "rose" | "maroon" | "highlight" | "crimson";
-  strong?: boolean;
-}) {
-  const fmt = useContext(CurrencyContext);
-  const colors = {
-    neutral: "text-neutral-300 border-neutral-700",
-    red: "text-red-300 border-red-500/30",
-    rose: "text-rose-300 border-rose-500/30",
-    maroon: "text-rose-400 border-rose-700/30",
-    highlight: "text-white border-neutral-400/40",
-    crimson: "text-red-400 border-red-600/30",
-  }[tone];
-  return (
-    <span className={`px-3 py-1.5 rounded-xl bg-neutral-900/70 border ${colors} ${strong ? "font-bold" : ""}`}>
-      <span className="text-[10px] uppercase tracking-wider text-neutral-500 mr-2">{label}</span>
-      {fmt(value)}
-    </span>
   );
 }
 
@@ -1572,7 +1536,7 @@ function EntryModal({
           />
           <button
             disabled={busy}
-            className="w-full py-3 rounded-xl bg-red-500 hover:bg-red-400 text-neutral-950 font-semibold disabled:opacity-50"
+            className="w-full py-3 rounded-xl bg-gradient-to-b from-red-500 to-red-600 hover:to-red-500 text-neutral-950 font-semibold shadow-lg shadow-red-950/50 disabled:opacity-50"
           >
             {busy ? "Saving..." : "Save"}
           </button>
@@ -1696,7 +1660,7 @@ function EditEntryModal({
           />
           <button
             disabled={busy}
-            className="w-full py-3 rounded-xl bg-red-500 hover:bg-red-400 text-neutral-950 font-semibold disabled:opacity-50"
+            className="w-full py-3 rounded-xl bg-gradient-to-b from-red-500 to-red-600 hover:to-red-500 text-neutral-950 font-semibold shadow-lg shadow-red-950/50 disabled:opacity-50"
           >
             {busy ? "Saving..." : "Save changes"}
           </button>
@@ -1855,7 +1819,7 @@ function SettingsModal({
               <button
                 onClick={save}
                 disabled={busy}
-                className="w-full py-3 rounded-xl bg-red-500 hover:bg-red-400 text-neutral-950 font-semibold disabled:opacity-50"
+                className="w-full py-3 rounded-xl bg-gradient-to-b from-red-500 to-red-600 hover:to-red-500 text-neutral-950 font-semibold shadow-lg shadow-red-950/50 disabled:opacity-50"
               >
                 {busy ? "Saving..." : "Save"}
               </button>
@@ -1893,7 +1857,7 @@ function SettingsModal({
             {pwSuccess && <p className="text-red-400 text-sm">Password changed.</p>}
             <button
               disabled={pwBusy}
-              className="w-full py-3 rounded-xl bg-red-500 hover:bg-red-400 text-neutral-950 font-semibold disabled:opacity-50"
+              className="w-full py-3 rounded-xl bg-gradient-to-b from-red-500 to-red-600 hover:to-red-500 text-neutral-950 font-semibold shadow-lg shadow-red-950/50 disabled:opacity-50"
             >
               {pwBusy ? "Saving..." : "Change password"}
             </button>
@@ -2134,7 +2098,7 @@ function DebtPaymentModal({
           />
           <button
             disabled={busy}
-            className="w-full py-3 rounded-xl bg-rose-700 hover:bg-rose-600 text-neutral-950 font-semibold disabled:opacity-50"
+            className="w-full py-3 rounded-xl bg-gradient-to-b from-rose-700 to-rose-800 hover:to-rose-700 text-neutral-950 font-semibold shadow-lg shadow-rose-950/50 disabled:opacity-50"
           >
             {busy ? "Logging..." : kind === "payment" ? "Log payment" : "Log card usage"}
           </button>
