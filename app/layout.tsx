@@ -6,7 +6,7 @@ export const metadata = { title: "Debt Tracker", description: "Track debt, incom
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className="bg-slate-950 text-slate-100 min-h-screen antialiased">
+      <body className="bg-neutral-950 text-neutral-100 min-h-screen antialiased">
         <Providers>{children}</Providers>
       </body>
     </html>

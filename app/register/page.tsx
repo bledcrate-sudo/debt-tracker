@@ -33,15 +33,15 @@ export default function RegisterPage() {
 
   return (
     <main className="min-h-screen grid place-items-center px-4">
-      <div className="w-full max-w-md bg-slate-900/70 backdrop-blur border border-slate-800 rounded-2xl p-8 shadow-2xl">
+      <div className="w-full max-w-md bg-neutral-900/70 backdrop-blur border border-neutral-800 rounded-2xl p-8 shadow-2xl">
         <h1 className="text-3xl font-bold mb-1">Create account</h1>
-        <p className="text-slate-400 mb-6">Free. Your data syncs to your account.</p>
+        <p className="text-neutral-400 mb-6">Free. Your data syncs to your account.</p>
         <form onSubmit={submit} className="space-y-4">
           <input
             placeholder="Name (optional)"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-emerald-500 outline-none"
+            className="w-full px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none"
           />
           <input
             type="email"
@@ -49,7 +49,7 @@ export default function RegisterPage() {
             placeholder="Email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-emerald-500 outline-none"
+            className="w-full px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none"
           />
           <input
             type="password"
@@ -58,19 +58,19 @@ export default function RegisterPage() {
             placeholder="Password (min 6 chars)"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-emerald-500 outline-none"
+            className="w-full px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none"
           />
           {err && <p className="text-rose-400 text-sm">{err}</p>}
           <button
             disabled={loading}
-            className="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold transition disabled:opacity-50"
+            className="w-full py-3 rounded-xl bg-red-500 hover:bg-red-400 text-neutral-950 font-semibold transition disabled:opacity-50"
           >
             {loading ? "Creating..." : "Create account"}
           </button>
         </form>
-        <p className="text-sm text-slate-400 mt-6 text-center">
+        <p className="text-sm text-neutral-400 mt-6 text-center">
           Already have one?{" "}
-          <Link href="/login" className="text-emerald-400 hover:underline">
+          <Link href="/login" className="text-red-400 hover:underline">
             Sign in
           </Link>
         </p>

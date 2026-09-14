@@ -444,7 +444,7 @@ export default function Dashboard({
       {isOffline && (
         <div
           role="status"
-          className="fixed top-4 left-1/2 -translate-x-1/2 z-[60] max-w-md w-[calc(100%-2rem)] bg-amber-500/15 border border-amber-500/40 text-amber-200 rounded-xl px-4 py-3 shadow-2xl text-sm text-center"
+          className="fixed top-4 left-1/2 -translate-x-1/2 z-[60] max-w-md w-[calc(100%-2rem)] bg-red-400/15 border border-red-400/40 text-red-200 rounded-xl px-4 py-3 shadow-2xl text-sm text-center"
         >
           You're offline — changes won't save until your connection comes back.
         </div>
@@ -467,16 +467,16 @@ export default function Dashboard({
       <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold">
-            Hello, <span className="text-emerald-400">{userName || userEmail.split("@")[0]}</span>
+            Hello, <span className="text-red-400">{userName || userEmail.split("@")[0]}</span>
           </h1>
-          <p className="text-slate-400 text-sm">Your money, tracked.</p>
+          <p className="text-neutral-400 text-sm">Your money, tracked.</p>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1 bg-slate-900/60 border border-slate-800 rounded-xl px-1 py-1">
+          <div className="flex items-center gap-1 bg-neutral-900/60 border border-neutral-800 rounded-xl px-1 py-1">
             <button
               onClick={() => setSelectedMonth((m) => shiftMonth(m, -1))}
               disabled={selectedMonth <= startMonth}
-              className="px-2 py-1.5 rounded-lg text-sm text-slate-300 hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent"
+              className="px-2 py-1.5 rounded-lg text-sm text-neutral-300 hover:bg-neutral-800 disabled:opacity-30 disabled:hover:bg-transparent"
               title="Previous month"
             >
               ‹
@@ -487,7 +487,7 @@ export default function Dashboard({
             <button
               onClick={() => setSelectedMonth((m) => shiftMonth(m, 1))}
               disabled={selectedMonth >= currentMonth}
-              className="px-2 py-1.5 rounded-lg text-sm text-slate-300 hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent"
+              className="px-2 py-1.5 rounded-lg text-sm text-neutral-300 hover:bg-neutral-800 disabled:opacity-30 disabled:hover:bg-transparent"
               title="Next month"
             >
               ›
@@ -497,7 +497,7 @@ export default function Dashboard({
             onClick={() => setSettingsOpen(true)}
             title="Settings"
             aria-label="Settings"
-            className="p-2.5 rounded-xl border border-slate-700 hover:bg-slate-800 transition text-slate-300 hover:text-white"
+            className="p-2.5 rounded-xl border border-neutral-700 hover:bg-neutral-800 transition text-neutral-300 hover:text-white"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="3" />
@@ -506,7 +506,7 @@ export default function Dashboard({
           </button>
           <button
             onClick={() => signOut({ callbackUrl: "/login" })}
-            className="px-4 py-2 rounded-xl border border-slate-700 hover:bg-slate-800 transition text-sm whitespace-nowrap"
+            className="px-4 py-2 rounded-xl border border-neutral-700 hover:bg-neutral-800 transition text-sm whitespace-nowrap"
           >
             Sign out
           </button>
@@ -518,7 +518,7 @@ export default function Dashboard({
         <StatCard
           label="Balance"
           value={fmt(balance)}
-          accent={balance >= 0 ? "emerald" : "rose"}
+          accent={balance >= 0 ? "red" : "rose"}
           sub={
             monthRow && monthRow.carryIn !== 0
               ? `${fmt(monthRow.carryIn)} carried in`
@@ -540,18 +540,18 @@ export default function Dashboard({
         <StatCard
           label="Purchases"
           value={fmt(totalPurchases)}
-          accent="violet"
+          accent="crimson"
           sub={
             monthRow && monthRow.purchaseTotal > monthRow.purchaseSpend
               ? `${fmt(monthRow.purchaseTotal - monthRow.purchaseSpend)} not from balance`
               : "Spent this month"
           }
         />
-        <StatCard label="Debt" value={fmt(totalDebt)} accent="orange" />
+        <StatCard label="Debt" value={fmt(totalDebt)} accent="maroon" />
         <StatCard
           label="Free to spend"
           value={fmt(monthlySurplus)}
-          accent={monthlySurplus >= 0 ? "sky" : "rose"}
+          accent={monthlySurplus >= 0 ? "highlight" : "rose"}
           sub={
             monthRow && monthRow.billsUnpaid > 0
               ? `After ${fmt(monthRow.billsUnpaid)} of bills left`
@@ -561,27 +561,27 @@ export default function Dashboard({
       </section>
 
       {monthRow && (
-        <section className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
+        <section className="bg-neutral-900/60 border border-neutral-800 rounded-2xl p-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-bold">{monthDisplay(selectedMonth)} ledger</h2>
             {monthRow.expectedIncome > monthRow.receivedIncome && (
-              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
+              <span className="text-xs px-2 py-0.5 rounded-full bg-red-400/15 text-red-300 border border-red-400/30">
                 {fmt(monthRow.expectedIncome - monthRow.receivedIncome)} income not received yet
               </span>
             )}
           </div>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-2 text-sm tabular-nums">
-            <LedgerBit label="Carried in" value={monthRow.carryIn} tone="slate" />
-            <span className="text-slate-600">+</span>
-            <LedgerBit label="Income received" value={monthRow.receivedIncome} tone="emerald" />
-            <span className="text-slate-600">−</span>
+            <LedgerBit label="Carried in" value={monthRow.carryIn} tone="neutral" />
+            <span className="text-neutral-600">+</span>
+            <LedgerBit label="Income received" value={monthRow.receivedIncome} tone="red" />
+            <span className="text-neutral-600">−</span>
             <LedgerBit label="Bills paid" value={monthRow.spentFromBalance} tone="rose" />
-            <span className="text-slate-600">−</span>
-            <LedgerBit label="Purchases" value={monthRow.purchaseSpend} tone="violet" />
-            <span className="text-slate-600">=</span>
-            <LedgerBit label="Left over" value={monthRow.closing} tone="sky" strong />
+            <span className="text-neutral-600">−</span>
+            <LedgerBit label="Purchases" value={monthRow.purchaseSpend} tone="crimson" />
+            <span className="text-neutral-600">=</span>
+            <LedgerBit label="Left over" value={monthRow.closing} tone="highlight" strong />
           </div>
-          <p className="text-xs text-slate-500 mt-3">
+          <p className="text-xs text-neutral-500 mt-3">
             Whatever's left rolls into {monthDisplay(shiftMonth(selectedMonth, 1))}. Mark income as
             received when it actually lands — nothing counts until you confirm it. Debt is tracked
             separately below and never affects this balance.
@@ -593,17 +593,17 @@ export default function Dashboard({
         <section
           className={`rounded-2xl border p-4 flex items-center gap-4 ${
             milestone.pct === 100
-              ? "bg-emerald-500/15 border-emerald-500/40"
-              : "bg-emerald-500/10 border-emerald-500/25"
+              ? "bg-red-500/15 border-red-500/40"
+              : "bg-red-500/10 border-red-500/25"
           }`}
         >
           <span className="text-3xl">{milestone.pct === 100 ? "🏆" : "🎯"}</span>
           <div className="flex-1 min-w-0">
-            <p className="font-bold text-emerald-300">{milestone.pct === 100 ? "Debt-free!" : `${milestone.pct}% paid off`}</p>
-            <p className="text-sm text-slate-300">{milestone.msg}</p>
-            <div className="mt-2 h-2 w-full bg-slate-800 rounded-full overflow-hidden">
+            <p className="font-bold text-red-300">{milestone.pct === 100 ? "Debt-free!" : `${milestone.pct}% paid off`}</p>
+            <p className="text-sm text-neutral-300">{milestone.msg}</p>
+            <div className="mt-2 h-2 w-full bg-neutral-800 rounded-full overflow-hidden">
               <div
-                className="h-full bg-emerald-500 rounded-full transition-all"
+                className="h-full bg-red-500 rounded-full transition-all"
                 style={{ width: `${Math.min(100, overallProgress * 100)}%` }}
               />
             </div>
@@ -615,7 +615,7 @@ export default function Dashboard({
       <section className="grid md:grid-cols-2 xl:grid-cols-4 gap-6">
         <CategoryTable
           title="Income"
-          color="emerald"
+          color="red"
           rows={monthIncome}
           total={totalIncome}
           onAdd={() => setModalType("income")}
@@ -640,7 +640,7 @@ export default function Dashboard({
         />
         <CategoryTable
           title="Purchases"
-          color="violet"
+          color="crimson"
           rows={purchases.filter((e) => monthKey(new Date(e.createdAt)) === selectedMonth)}
           total={totalPurchases}
           onAdd={() => setModalType("purchase")}
@@ -649,7 +649,7 @@ export default function Dashboard({
         />
         <CategoryTable
           title="Debt"
-          color="orange"
+          color="maroon"
           rows={debts}
           total={totalDebt}
           onAdd={() => setModalType("debt")}
@@ -661,13 +661,13 @@ export default function Dashboard({
       </section>
 
       {/* Summary table */}
-      <section className="bg-slate-900/60 border border-slate-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between">
+      <section className="bg-neutral-900/60 border border-neutral-800 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-neutral-800 flex items-center justify-between">
           <h2 className="text-lg font-bold">Monthly summary</h2>
-          <span className="text-xs text-slate-500">All numbers combined</span>
+          <span className="text-xs text-neutral-500">All numbers combined</span>
         </div>
         <table className="w-full text-sm">
-          <thead className="bg-slate-900 text-slate-400 text-xs uppercase">
+          <thead className="bg-neutral-900 text-neutral-400 text-xs uppercase">
             <tr>
               <th className="text-left px-5 py-3">Category</th>
               <th className="text-right px-5 py-3">Entries</th>
@@ -676,8 +676,8 @@ export default function Dashboard({
               <th className="text-left px-5 py-3 hidden md:table-cell">Notes</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800">
-            <SumRow label="Income" count={monthIncome.length} total={totalIncome} pctOfIncome={1} color="emerald" />
+          <tbody className="divide-y divide-neutral-800">
+            <SumRow label="Income" count={monthIncome.length} total={totalIncome} pctOfIncome={1} color="red" />
             <SumRow
               label="Bills"
               count={monthExpenses.length}
@@ -690,26 +690,26 @@ export default function Dashboard({
               count={purchases.filter((e) => monthKey(new Date(e.createdAt)) === selectedMonth).length}
               total={-totalPurchases}
               pctOfIncome={totalIncome ? -totalPurchases / totalIncome : 0}
-              color="violet"
+              color="crimson"
             />
             <SumRow
               label="Debt"
               count={debts.length}
               total={-totalDebt}
               pctOfIncome={totalIncome ? -totalDebt / totalIncome : 0}
-              color="orange"
+              color="maroon"
               note={`DTI ratio ${pct(dti)}`}
             />
-            <tr className="bg-slate-900/80 font-bold">
+            <tr className="bg-neutral-900/80 font-bold">
               <td className="px-5 py-3">Net balance</td>
-              <td className="px-5 py-3 text-right text-slate-400">{entries.length}</td>
-              <td className={`px-5 py-3 text-right tabular-nums ${balance >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+              <td className="px-5 py-3 text-right text-neutral-400">{entries.length}</td>
+              <td className={`px-5 py-3 text-right tabular-nums ${balance >= 0 ? "text-red-400" : "text-rose-400"}`}>
                 {fmt(balance)}
               </td>
-              <td className="px-5 py-3 text-right hidden sm:table-cell text-slate-400">
+              <td className="px-5 py-3 text-right hidden sm:table-cell text-neutral-400">
                 {totalIncome ? pct(balance / totalIncome) : "—"}
               </td>
-              <td className="px-5 py-3 hidden md:table-cell text-slate-500">
+              <td className="px-5 py-3 hidden md:table-cell text-neutral-500">
                 Income − Bills − Purchases (debt is tracked separately, not netted in)
               </td>
             </tr>
@@ -718,25 +718,25 @@ export default function Dashboard({
       </section>
 
       {/* Debt payment plan */}
-      <section className="bg-gradient-to-br from-orange-500/10 via-slate-900 to-slate-900 border border-orange-500/30 rounded-2xl p-6">
+      <section className="bg-gradient-to-br from-rose-700/10 via-neutral-900 to-neutral-900 border border-rose-700/30 rounded-2xl p-6">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div>
             <h2 className="text-xl font-bold flex items-center gap-2">
               <span>Debt payment plan</span>
-              <span className="text-xs px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-300 border border-orange-500/40">
+              <span className="text-xs px-2 py-0.5 rounded-full bg-rose-700/20 text-rose-400 border border-rose-700/40">
                 Smart plan
               </span>
             </h2>
-            <p className="text-slate-400 text-sm">
-              Driven by what's <span className="text-sky-300">free after this month's bills</span> ({fmt(monthlySurplus)}).
+            <p className="text-neutral-400 text-sm">
+              Driven by what's <span className="text-white">free after this month's bills</span> ({fmt(monthlySurplus)}).
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <div className="flex bg-slate-800 border border-slate-700 rounded-xl p-1">
+            <div className="flex bg-neutral-800 border border-neutral-700 rounded-xl p-1">
               <button
                 onClick={() => setStrategy("avalanche")}
                 className={`px-3 py-1.5 rounded-lg text-sm transition ${
-                  strategy === "avalanche" ? "bg-orange-500 text-slate-950 font-semibold" : "text-slate-300"
+                  strategy === "avalanche" ? "bg-rose-700 text-neutral-950 font-semibold" : "text-neutral-300"
                 }`}
               >
                 Avalanche
@@ -744,7 +744,7 @@ export default function Dashboard({
               <button
                 onClick={() => setStrategy("snowball")}
                 className={`px-3 py-1.5 rounded-lg text-sm transition ${
-                  strategy === "snowball" ? "bg-orange-500 text-slate-950 font-semibold" : "text-slate-300"
+                  strategy === "snowball" ? "bg-rose-700 text-neutral-950 font-semibold" : "text-neutral-300"
                 }`}
               >
                 Snowball
@@ -755,11 +755,11 @@ export default function Dashboard({
 
         {plan.monthsToClear !== Infinity && altPlan.monthsToClear !== Infinity && debts.length > 1 &&
           Math.abs(plan.totalInterest - altPlan.totalInterest) >= 1 && (
-          <p className="text-xs text-slate-400 -mt-2 mb-4">
+          <p className="text-xs text-neutral-400 -mt-2 mb-4">
             {plan.totalInterest <= altPlan.totalInterest ? (
               <>
-                <span className="text-emerald-300 font-semibold capitalize">{strategy}</span> saves{" "}
-                <span className="text-emerald-300">{fmt(altPlan.totalInterest - plan.totalInterest)}</span> in interest
+                <span className="text-red-300 font-semibold capitalize">{strategy}</span> saves{" "}
+                <span className="text-red-300">{fmt(altPlan.totalInterest - plan.totalInterest)}</span> in interest
                 {altPlan.monthsToClear > plan.monthsToClear &&
                   ` and ${altPlan.monthsToClear - plan.monthsToClear} month${altPlan.monthsToClear - plan.monthsToClear === 1 ? "" : "s"}`}{" "}
                 vs {strategy === "avalanche" ? "snowball" : "avalanche"}.
@@ -767,8 +767,8 @@ export default function Dashboard({
             ) : (
               <>
                 Switching to{" "}
-                <span className="text-orange-300 font-semibold">{strategy === "avalanche" ? "snowball" : "avalanche"}</span>{" "}
-                would save <span className="text-orange-300">{fmt(plan.totalInterest - altPlan.totalInterest)}</span> in interest.
+                <span className="text-rose-400 font-semibold">{strategy === "avalanche" ? "snowball" : "avalanche"}</span>{" "}
+                would save <span className="text-rose-400">{fmt(plan.totalInterest - altPlan.totalInterest)}</span> in interest.
               </>
             )}
           </p>
@@ -788,8 +788,8 @@ export default function Dashboard({
             label="Interest you'll pay"
             value={plan.totalInterest === Infinity ? "∞" : fmt(plan.totalInterest)}
           />
-          <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-3">
-            <p className="text-xs uppercase tracking-wider text-slate-500">Surplus % to debt</p>
+          <div className="bg-neutral-900/70 border border-neutral-800 rounded-xl p-3">
+            <p className="text-xs uppercase tracking-wider text-neutral-500">Surplus % to debt</p>
             <div className="flex items-center gap-3 mt-2">
               <input
                 type="range"
@@ -798,21 +798,21 @@ export default function Dashboard({
                 step={5}
                 value={payoutPct}
                 onChange={(e) => setPayoutPct(parseInt(e.target.value))}
-                className="flex-1 accent-orange-500"
+                className="flex-1 accent-rose-700"
               />
-              <span className="text-orange-300 font-semibold w-12 text-right tabular-nums">{payoutPct}%</span>
+              <span className="text-rose-400 font-semibold w-12 text-right tabular-nums">{payoutPct}%</span>
             </div>
           </div>
         </div>
 
         {debts.length > 0 && (
           <div className="grid md:grid-cols-2 gap-3 mb-5">
-            <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-3">
-              <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">
+            <div className="bg-neutral-900/70 border border-neutral-800 rounded-xl p-3">
+              <p className="text-xs uppercase tracking-wider text-neutral-500 mb-2">
                 What if I paid more each month?
               </p>
               <div className="flex items-center gap-3">
-                <span className="text-slate-400 text-sm">+</span>
+                <span className="text-neutral-400 text-sm">+</span>
                 <input
                   type="number"
                   min={0}
@@ -820,27 +820,27 @@ export default function Dashboard({
                   value={whatIfExtra || ""}
                   placeholder="0"
                   onChange={(e) => setWhatIfExtra(Math.max(0, parseFloat(e.target.value) || 0))}
-                  className="w-24 px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 focus:border-orange-500 outline-none text-sm tabular-nums"
+                  className="w-24 px-3 py-1.5 rounded-lg bg-neutral-800 border border-neutral-700 focus:border-rose-700 outline-none text-sm tabular-nums"
                 />
-                <span className="text-slate-400 text-sm">/mo extra</span>
+                <span className="text-neutral-400 text-sm">/mo extra</span>
               </div>
               {whatIfPlan && plan.monthsToClear !== Infinity && whatIfPlan.monthsToClear !== Infinity && (
-                <p className="text-sm mt-2 text-emerald-300">
+                <p className="text-sm mt-2 text-red-300">
                   Debt-free {plan.monthsToClear - whatIfPlan.monthsToClear} month
                   {plan.monthsToClear - whatIfPlan.monthsToClear === 1 ? "" : "s"} sooner, save{" "}
                   {fmt(Math.max(0, plan.totalInterest - whatIfPlan.totalInterest))} in interest.
                 </p>
               )}
               {whatIfPlan && plan.monthsToClear === Infinity && whatIfPlan.monthsToClear !== Infinity && (
-                <p className="text-sm mt-2 text-emerald-300">
+                <p className="text-sm mt-2 text-red-300">
                   That extra makes you debt-free in {whatIfPlan.monthsToClear} months — right now you never get there.
                 </p>
               )}
             </div>
-            <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-3">
-              <p className="text-xs uppercase tracking-wider text-slate-500 mb-1">Balance over time</p>
+            <div className="bg-neutral-900/70 border border-neutral-800 rounded-xl p-3">
+              <p className="text-xs uppercase tracking-wider text-neutral-500 mb-1">Balance over time</p>
               {plan.monthsToClear === Infinity ? (
-                <p className="text-sm text-slate-500 italic mt-2">
+                <p className="text-sm text-neutral-500 italic mt-2">
                   Payments don't cover interest — balance never reaches zero. Raise the slider.
                 </p>
               ) : (
@@ -851,11 +851,11 @@ export default function Dashboard({
         )}
 
         {debts.length === 0 ? (
-          <p className="text-slate-400 italic">No debts logged. Hit "+ Debt" to start planning.</p>
+          <p className="text-neutral-400 italic">No debts logged. Hit "+ Debt" to start planning.</p>
         ) : (
-          <div className="overflow-x-auto bg-slate-900/60 border border-slate-800 rounded-xl">
+          <div className="overflow-x-auto bg-neutral-900/60 border border-neutral-800 rounded-xl">
             <table className="w-full text-sm">
-              <thead className="bg-slate-900 text-slate-400 text-xs uppercase">
+              <thead className="bg-neutral-900 text-neutral-400 text-xs uppercase">
                 <tr>
                   <th className="text-left px-4 py-3">#</th>
                   <th className="text-left px-4 py-3">Debt</th>
@@ -866,21 +866,21 @@ export default function Dashboard({
                   <th className="text-right px-4 py-3 hidden md:table-cell">Cleared by</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800">
+              <tbody className="divide-y divide-neutral-800">
                 {payoffOrder.map((d, i) => (
-                  <tr key={d.id} className="hover:bg-orange-500/5">
-                    <td className="px-4 py-3 text-slate-500">{i + 1}</td>
+                  <tr key={d.id} className="hover:bg-rose-700/5">
+                    <td className="px-4 py-3 text-neutral-500">{i + 1}</td>
                     <td className="px-4 py-3 font-medium">
                       {d.label}
                       {i === 0 && (
-                        <span className="ml-2 text-xs px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">
+                        <span className="ml-2 text-xs px-2 py-0.5 rounded bg-rose-700/20 text-rose-400">
                           attack first
                         </span>
                       )}
                       {(d.originalAmount ?? 0) > 0 && (
-                        <div className="mt-1.5 h-1.5 w-full max-w-[160px] bg-slate-800 rounded-full overflow-hidden">
+                        <div className="mt-1.5 h-1.5 w-full max-w-[160px] bg-neutral-800 rounded-full overflow-hidden">
                           <div
-                            className="h-full bg-emerald-500 rounded-full"
+                            className="h-full bg-red-500 rounded-full"
                             style={{
                               width: `${Math.min(100, Math.max(0, (1 - d.amount / Math.max(d.originalAmount ?? d.amount, d.amount)) * 100))}%`,
                             }}
@@ -888,8 +888,8 @@ export default function Dashboard({
                         </div>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-orange-300">{fmt(d.amount)}</td>
-                    <td className="px-4 py-3 text-right hidden sm:table-cell text-slate-400 tabular-nums">
+                    <td className="px-4 py-3 text-right tabular-nums text-rose-400">{fmt(d.amount)}</td>
+                    <td className="px-4 py-3 text-right hidden sm:table-cell text-neutral-400 tabular-nums">
                       {d.apr != null ? `${d.apr}%` : "—"}
                     </td>
                     <td className="px-4 py-3 text-right hidden lg:table-cell text-rose-300/80 tabular-nums">
@@ -898,7 +898,7 @@ export default function Dashboard({
                     <td className="px-4 py-3 text-right tabular-nums">
                       {d.months === Infinity ? "∞" : `${d.months} mo`}
                     </td>
-                    <td className="px-4 py-3 text-right hidden md:table-cell text-slate-400">
+                    <td className="px-4 py-3 text-right hidden md:table-cell text-neutral-400">
                       {d.eta === Infinity ? "—" : monthLabel(d.eta)}
                     </td>
                   </tr>
@@ -915,14 +915,14 @@ export default function Dashboard({
                 key={i}
                 className={`rounded-xl p-4 border ${
                   s.tone === "good"
-                    ? "bg-emerald-500/10 border-emerald-500/30"
+                    ? "bg-neutral-500/10 border-neutral-500/30"
                     : s.tone === "warn"
-                    ? "bg-amber-500/10 border-amber-500/30"
+                    ? "bg-red-400/10 border-red-400/30"
                     : "bg-rose-500/10 border-rose-500/30"
                 }`}
               >
                 <p className="font-semibold text-white">{s.title}</p>
-                <p className="text-sm text-slate-300 mt-1">{s.body}</p>
+                <p className="text-sm text-neutral-300 mt-1">{s.body}</p>
               </div>
             ))}
           </div>
@@ -1011,7 +1011,7 @@ function CategoryTable({
   paidLabels,
 }: {
   title: string;
-  color: "emerald" | "rose" | "orange" | "violet";
+  color: "red" | "rose" | "maroon" | "crimson";
   rows: Entry[];
   total: number;
   onAdd: () => void;
@@ -1027,15 +1027,15 @@ function CategoryTable({
   const fmt = useContext(CurrencyContext);
   const marks = paidLabels ?? { header: "Paid", yes: "✓ Paid", no: "Mark paid" };
   const map = {
-    emerald: { bar: "bg-emerald-500", text: "text-emerald-400", chip: "bg-emerald-500/15 border-emerald-500/30", btn: "bg-emerald-500 hover:bg-emerald-400 text-slate-950" },
+    red: { bar: "bg-red-500", text: "text-red-400", chip: "bg-red-500/15 border-red-500/30", btn: "bg-red-500 hover:bg-red-400 text-neutral-950" },
     rose: { bar: "bg-rose-500", text: "text-rose-400", chip: "bg-rose-500/15 border-rose-500/30", btn: "bg-rose-500 hover:bg-rose-400 text-white" },
-    orange: { bar: "bg-orange-500", text: "text-orange-400", chip: "bg-orange-500/15 border-orange-500/30", btn: "bg-orange-500 hover:bg-orange-400 text-slate-950" },
-    violet: { bar: "bg-violet-500", text: "text-violet-400", chip: "bg-violet-500/15 border-violet-500/30", btn: "bg-violet-500 hover:bg-violet-400 text-white" },
+    maroon: { bar: "bg-rose-700", text: "text-rose-600", chip: "bg-rose-700/15 border-rose-700/30", btn: "bg-rose-700 hover:bg-rose-600 text-neutral-950" },
+    crimson: { bar: "bg-red-600", text: "text-red-500", chip: "bg-red-600/15 border-red-600/30", btn: "bg-red-600 hover:bg-red-500 text-white" },
   }[color];
   return (
-    <div className="bg-slate-900/60 border border-slate-800 rounded-2xl overflow-hidden flex flex-col">
+    <div className="bg-neutral-900/60 border border-neutral-800 rounded-2xl overflow-hidden flex flex-col">
       <div className={`h-1 ${map.bar}`} />
-      <div className="px-5 py-4 flex items-center justify-between border-b border-slate-800">
+      <div className="px-5 py-4 flex items-center justify-between border-b border-neutral-800">
         <div>
           <h3 className="text-lg font-bold">{title}</h3>
           <p className={`text-sm tabular-nums ${map.text} font-semibold`}>{fmt(total)}</p>
@@ -1046,7 +1046,7 @@ function CategoryTable({
       </div>
       <div className="overflow-x-auto flex-1">
         <table className="w-full text-sm">
-          <thead className="text-slate-500 text-xs uppercase">
+          <thead className="text-neutral-500 text-xs uppercase">
             <tr>
               <th className="text-left px-4 py-2">Label</th>
               <th className="text-right px-4 py-2">Amount</th>
@@ -1055,10 +1055,10 @@ function CategoryTable({
               <th className="px-4 py-2 w-8"></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800">
+          <tbody className="divide-y divide-neutral-800">
             {rows.length === 0 && (
               <tr>
-                <td colSpan={(showShare ? 4 : 3) + (onTogglePaid ? 1 : 0)} className="text-center py-8 text-slate-500 italic">
+                <td colSpan={(showShare ? 4 : 3) + (onTogglePaid ? 1 : 0)} className="text-center py-8 text-neutral-500 italic">
                   Empty — click + Add
                 </td>
               </tr>
@@ -1066,22 +1066,22 @@ function CategoryTable({
             {rows.map((e) => {
               const paid = !!selectedMonth && e.payments.some((p) => p.month === selectedMonth);
               return (
-              <tr key={e.id} className={`hover:bg-slate-800/40 ${paid ? "bg-emerald-500/5" : ""}`}>
+              <tr key={e.id} className={`hover:bg-neutral-800/40 ${paid ? "bg-red-500/5" : ""}`}>
                 <td className="px-4 py-2.5">
                   <p className="font-medium truncate flex items-center gap-2">
                     {e.label}
                     {e.type === "purchase" ? (
                       <>
-                        <span className="text-[10px] uppercase tracking-wider text-slate-500">
+                        <span className="text-[10px] uppercase tracking-wider text-neutral-500">
                           {new Date(e.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
                         </span>
                         {e.sourceKind === "debt" && (
-                          <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-300 border border-orange-500/30">
+                          <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-rose-700/20 text-rose-400 border border-rose-700/30">
                             On card
                           </span>
                         )}
                         {e.sourceKind === "off" && (
-                          <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-700/50 text-slate-400 border border-slate-600/40">
+                          <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-neutral-700/50 text-neutral-400 border border-neutral-600/40">
                             Off balance
                           </span>
                         )}
@@ -1091,19 +1091,19 @@ function CategoryTable({
                         <span
                           className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${
                             e.frequency === "monthly"
-                              ? "bg-sky-500/20 text-sky-300 border border-sky-500/30"
-                              : "bg-slate-700/50 text-slate-400 border border-slate-600/40"
+                              ? "bg-neutral-400/20 text-white border border-neutral-400/30"
+                              : "bg-neutral-700/50 text-neutral-400 border border-neutral-600/40"
                           }`}
                         >
                           {e.frequency === "monthly" ? "Monthly" : "Once"}
                         </span>
                         {e.sourceKind === "debt" && (
-                          <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-300 border border-orange-500/30">
+                          <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-rose-700/20 text-rose-400 border border-rose-700/30">
                             On card
                           </span>
                         )}
                         {e.sourceKind === "off" && (
-                          <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-700/50 text-slate-400 border border-slate-600/40">
+                          <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-neutral-700/50 text-neutral-400 border border-neutral-600/40">
                             Off balance
                           </span>
                         )}
@@ -1118,16 +1118,16 @@ function CategoryTable({
                         className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border ${
                           daysUntilDue(e.dueDay) === 0
                             ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
-                            : "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                            : "bg-red-400/20 text-red-300 border-red-400/40"
                         }`}
                       >
                         {daysUntilDue(e.dueDay) === 0 ? "Due today" : `Due in ${daysUntilDue(e.dueDay)}d`}
                       </span>
                     )}
                   </p>
-                  {e.note && <p className="text-xs text-slate-500 truncate">{e.note}</p>}
+                  {e.note && <p className="text-xs text-neutral-500 truncate">{e.note}</p>}
                   {onLogPayment && (!!e.paidSoFar || !!e.chargedSoFar) && (
-                    <p className="text-xs text-slate-500 truncate">
+                    <p className="text-xs text-neutral-500 truncate">
                       {fmt(e.paidSoFar ?? 0)} paid
                       {e.chargedSoFar ? ` · ${fmt(e.chargedSoFar)} used` : ""} · started {fmt(e.originalAmount ?? e.amount)}
                     </p>
@@ -1137,7 +1137,7 @@ function CategoryTable({
                   {fmt(e.amount)}
                 </td>
                 {showShare && (
-                  <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums">
+                  <td className="px-4 py-2.5 text-right text-neutral-400 tabular-nums">
                     {total ? pct(e.amount / total) : "—"}
                   </td>
                 )}
@@ -1149,8 +1149,8 @@ function CategoryTable({
                         disabled={payBusy === e.id}
                         className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition disabled:opacity-50 ${
                           paid
-                            ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-300"
-                            : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+                            ? "bg-red-500/20 border-red-500/40 text-red-300"
+                            : "bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-white"
                         }`}
                       >
                         {paid
@@ -1160,7 +1160,7 @@ function CategoryTable({
                           : marks.no}
                       </button>
                     ) : (
-                      <span className="text-slate-600">—</span>
+                      <span className="text-neutral-600">—</span>
                     )}
                   </td>
                 )}
@@ -1169,14 +1169,14 @@ function CategoryTable({
                     {onLogPayment && (
                       <button
                         onClick={() => onLogPayment(e.id, e.label)}
-                        className="px-2 py-1 rounded-lg text-xs font-semibold bg-orange-500/15 border border-orange-500/30 text-orange-300 hover:bg-orange-500/25"
+                        className="px-2 py-1 rounded-lg text-xs font-semibold bg-rose-700/15 border border-rose-700/30 text-rose-400 hover:bg-rose-700/25"
                       >
                         + Payment
                       </button>
                     )}
                     <button
                       onClick={() => onEdit(e)}
-                      className="text-slate-500 hover:text-emerald-400"
+                      className="text-neutral-500 hover:text-red-400"
                       title="Edit"
                       aria-label={`Edit ${e.label}`}
                     >
@@ -1184,7 +1184,7 @@ function CategoryTable({
                     </button>
                     <button
                       onClick={() => onDelete(e.id)}
-                      className="text-slate-500 hover:text-rose-400"
+                      className="text-neutral-500 hover:text-rose-400"
                       title="Delete"
                       aria-label={`Delete ${e.label}`}
                     >
@@ -1210,21 +1210,21 @@ function StatCard({
 }: {
   label: string;
   value: string;
-  accent: "emerald" | "rose" | "orange" | "sky" | "violet";
+  accent: "red" | "rose" | "maroon" | "highlight" | "crimson";
   sub?: string;
 }) {
   const colors: Record<string, string> = {
-    emerald: "from-emerald-500/20 to-emerald-500/0 border-emerald-500/30",
+    red: "from-red-500/20 to-red-500/0 border-red-500/30",
     rose: "from-rose-500/20 to-rose-500/0 border-rose-500/30",
-    orange: "from-orange-500/20 to-orange-500/0 border-orange-500/30",
-    sky: "from-sky-500/20 to-sky-500/0 border-sky-500/30",
-    violet: "from-violet-500/20 to-violet-500/0 border-violet-500/30",
+    maroon: "from-rose-700/20 to-rose-700/0 border-rose-700/30",
+    highlight: "from-neutral-400/20 to-neutral-400/0 border-neutral-400/30",
+    crimson: "from-red-600/20 to-red-600/0 border-red-600/30",
   };
   return (
     <div className={`bg-gradient-to-br ${colors[accent]} border rounded-2xl p-4`}>
       <p className="text-xs uppercase tracking-wider opacity-80">{label}</p>
       <p className="text-2xl font-bold mt-2 tabular-nums text-white">{value}</p>
-      {sub && <p className="text-xs text-slate-400 mt-1">{sub}</p>}
+      {sub && <p className="text-xs text-neutral-400 mt-1">{sub}</p>}
     </div>
   );
 }
@@ -1237,21 +1237,21 @@ function LedgerBit({
 }: {
   label: string;
   value: number;
-  tone: "slate" | "emerald" | "rose" | "orange" | "sky" | "violet";
+  tone: "neutral" | "red" | "rose" | "maroon" | "highlight" | "crimson";
   strong?: boolean;
 }) {
   const fmt = useContext(CurrencyContext);
   const colors = {
-    slate: "text-slate-300 border-slate-700",
-    emerald: "text-emerald-300 border-emerald-500/30",
+    neutral: "text-neutral-300 border-neutral-700",
+    red: "text-red-300 border-red-500/30",
     rose: "text-rose-300 border-rose-500/30",
-    orange: "text-orange-300 border-orange-500/30",
-    sky: "text-sky-300 border-sky-500/40",
-    violet: "text-violet-300 border-violet-500/30",
+    maroon: "text-rose-400 border-rose-700/30",
+    highlight: "text-white border-neutral-400/40",
+    crimson: "text-red-400 border-red-600/30",
   }[tone];
   return (
-    <span className={`px-3 py-1.5 rounded-xl bg-slate-900/70 border ${colors} ${strong ? "font-bold" : ""}`}>
-      <span className="text-[10px] uppercase tracking-wider text-slate-500 mr-2">{label}</span>
+    <span className={`px-3 py-1.5 rounded-xl bg-neutral-900/70 border ${colors} ${strong ? "font-bold" : ""}`}>
+      <span className="text-[10px] uppercase tracking-wider text-neutral-500 mr-2">{label}</span>
       {fmt(value)}
     </span>
   );
@@ -1259,10 +1259,10 @@ function LedgerBit({
 
 function MiniStat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-3">
-      <p className="text-xs uppercase tracking-wider text-slate-500">{label}</p>
+    <div className="bg-neutral-900/70 border border-neutral-800 rounded-xl p-3">
+      <p className="text-xs uppercase tracking-wider text-neutral-500">{label}</p>
       <p className="text-xl font-bold tabular-nums mt-1">{value}</p>
-      {sub && <p className="text-[11px] text-slate-500 mt-0.5">{sub}</p>}
+      {sub && <p className="text-[11px] text-neutral-500 mt-0.5">{sub}</p>}
     </div>
   );
 }
@@ -1279,23 +1279,23 @@ function SumRow({
   count: number;
   total: number;
   pctOfIncome: number;
-  color: "emerald" | "rose" | "orange" | "violet";
+  color: "red" | "rose" | "maroon" | "crimson";
   note?: string;
 }) {
   const fmt = useContext(CurrencyContext);
   const map = {
-    emerald: "text-emerald-400",
+    red: "text-red-400",
     rose: "text-rose-400",
-    orange: "text-orange-400",
-    violet: "text-violet-400",
+    maroon: "text-rose-600",
+    crimson: "text-red-500",
   };
   return (
-    <tr className="hover:bg-slate-800/30">
+    <tr className="hover:bg-neutral-800/30">
       <td className="px-5 py-3 font-medium">{label}</td>
-      <td className="px-5 py-3 text-right text-slate-400">{count}</td>
+      <td className="px-5 py-3 text-right text-neutral-400">{count}</td>
       <td className={`px-5 py-3 text-right tabular-nums font-semibold ${map[color]}`}>{fmt(total)}</td>
-      <td className="px-5 py-3 text-right hidden sm:table-cell text-slate-400">{pct(pctOfIncome)}</td>
-      <td className="px-5 py-3 hidden md:table-cell text-slate-500">{note ?? ""}</td>
+      <td className="px-5 py-3 text-right hidden sm:table-cell text-neutral-400">{pct(pctOfIncome)}</td>
+      <td className="px-5 py-3 hidden md:table-cell text-neutral-500">{note ?? ""}</td>
     </tr>
   );
 }
@@ -1316,15 +1316,15 @@ function SourcePicker({
   const fmt = useContext(CurrencyContext);
   return (
     <div>
-      <label className="block text-xs uppercase tracking-wider text-slate-400 mb-2">Paid with</label>
+      <label className="block text-xs uppercase tracking-wider text-neutral-400 mb-2">Paid with</label>
       <div className="grid grid-cols-3 gap-2">
         <button
           type="button"
           onClick={() => setSource("balance")}
           className={`px-2 py-2.5 rounded-xl border text-sm font-medium transition ${
             source === "balance"
-              ? "bg-emerald-500/20 border-emerald-500 text-emerald-200"
-              : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+              ? "bg-red-500/20 border-red-500 text-red-200"
+              : "bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-white"
           }`}
         >
           Balance
@@ -1334,8 +1334,8 @@ function SourcePicker({
           onClick={() => setSource("off")}
           className={`px-2 py-2.5 rounded-xl border text-sm font-medium transition ${
             source === "off"
-              ? "bg-slate-600/40 border-slate-500 text-white"
-              : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+              ? "bg-neutral-600/40 border-neutral-500 text-white"
+              : "bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-white"
           }`}
         >
           Off balance
@@ -1346,14 +1346,14 @@ function SourcePicker({
           onClick={() => setSource("debt")}
           className={`px-2 py-2.5 rounded-xl border text-sm font-medium transition disabled:opacity-40 ${
             source === "debt"
-              ? "bg-orange-500/20 border-orange-500 text-orange-200"
-              : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+              ? "bg-rose-700/20 border-rose-700 text-rose-300"
+              : "bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-white"
           }`}
         >
           Card
         </button>
       </div>
-      <p className="text-xs text-slate-500 mt-2">
+      <p className="text-xs text-neutral-500 mt-2">
         {source === "balance"
           ? "Comes straight out of your balance."
           : source === "off"
@@ -1364,7 +1364,7 @@ function SourcePicker({
         <select
           value={debtEntryId}
           onChange={(e) => setDebtEntryId(e.target.value)}
-          className="w-full mt-2 px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-orange-500 outline-none"
+          className="w-full mt-2 px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-rose-700 outline-none"
         >
           <option value="">Choose a card or loan…</option>
           {debts.map((d) => (
@@ -1454,11 +1454,11 @@ function EntryModal({
         role="dialog"
         aria-modal="true"
         aria-label={titles[type]}
-        className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl"
+        className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 w-full max-w-md shadow-2xl"
       >
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-bold capitalize">{titles[type]}</h2>
-          <button onClick={onClose} aria-label="Close" className="text-slate-500 hover:text-white">✕</button>
+          <button onClick={onClose} aria-label="Close" className="text-neutral-500 hover:text-white">✕</button>
         </div>
         <form onSubmit={submit} className="space-y-3">
           {type === "purchase" ? (
@@ -1471,15 +1471,15 @@ function EntryModal({
             />
           ) : (
           <div>
-            <label className="block text-xs uppercase tracking-wider text-slate-400 mb-2">Frequency</label>
+            <label className="block text-xs uppercase tracking-wider text-neutral-400 mb-2">Frequency</label>
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
                 onClick={() => setFrequency("once")}
                 className={`px-3 py-2.5 rounded-xl border text-sm font-medium transition ${
                   frequency === "once"
-                    ? "bg-slate-700 border-slate-500 text-white"
-                    : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+                    ? "bg-neutral-700 border-neutral-500 text-white"
+                    : "bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-white"
                 }`}
               >
                 One-time
@@ -1489,14 +1489,14 @@ function EntryModal({
                 onClick={() => setFrequency("monthly")}
                 className={`px-3 py-2.5 rounded-xl border text-sm font-medium transition ${
                   frequency === "monthly"
-                    ? "bg-sky-500/20 border-sky-500 text-sky-200"
-                    : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+                    ? "bg-neutral-400/20 border-neutral-400 text-white"
+                    : "bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-white"
                 }`}
               >
                 Monthly recurring
               </button>
             </div>
-            <p className="text-xs text-slate-500 mt-2">{hints[type][frequency]}</p>
+            <p className="text-xs text-neutral-500 mt-2">{hints[type][frequency]}</p>
           </div>
           )}
           {type === "expense" && frequency === "once" && (
@@ -1517,7 +1517,7 @@ function EntryModal({
             }
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-emerald-500 outline-none"
+            className="w-full px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none"
           />
           <input
             type="number"
@@ -1526,7 +1526,7 @@ function EntryModal({
             placeholder="Amount"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-emerald-500 outline-none"
+            className="w-full px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none"
           />
           {type === "debt" && (
             <div className="grid grid-cols-2 gap-2">
@@ -1537,7 +1537,7 @@ function EntryModal({
                 placeholder="APR % (optional)"
                 value={apr}
                 onChange={(e) => setApr(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-orange-500 outline-none"
+                className="w-full px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-rose-700 outline-none"
               />
               <input
                 type="number"
@@ -1546,7 +1546,7 @@ function EntryModal({
                 placeholder="Min payment / mo"
                 value={minPayment}
                 onChange={(e) => setMinPayment(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-orange-500 outline-none"
+                className="w-full px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-rose-700 outline-none"
               />
               <input
                 type="number"
@@ -1556,9 +1556,9 @@ function EntryModal({
                 placeholder="Due day (1–31)"
                 value={dueDay}
                 onChange={(e) => setDueDay(e.target.value)}
-                className="col-span-2 w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-orange-500 outline-none"
+                className="col-span-2 w-full px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-rose-700 outline-none"
               />
-              <p className="col-span-2 text-xs text-slate-500">
+              <p className="col-span-2 text-xs text-neutral-500">
                 APR + minimum make the payoff plan accurate; due day shows a reminder before the payment date.
               </p>
             </div>
@@ -1568,11 +1568,11 @@ function EntryModal({
             value={note}
             onChange={(e) => setNote(e.target.value)}
             rows={2}
-            className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-emerald-500 outline-none resize-none"
+            className="w-full px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none resize-none"
           />
           <button
             disabled={busy}
-            className="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold disabled:opacity-50"
+            className="w-full py-3 rounded-xl bg-red-500 hover:bg-red-400 text-neutral-950 font-semibold disabled:opacity-50"
           >
             {busy ? "Saving..." : "Save"}
           </button>
@@ -1626,18 +1626,18 @@ function EditEntryModal({
         role="dialog"
         aria-modal="true"
         aria-label={`Edit ${entry.label}`}
-        className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl"
+        className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 w-full max-w-md shadow-2xl"
       >
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-bold">Edit {entry.type === "debt" ? "debt" : entry.type}</h2>
-          <button onClick={onClose} aria-label="Close" className="text-slate-500 hover:text-white">✕</button>
+          <button onClick={onClose} aria-label="Close" className="text-neutral-500 hover:text-white">✕</button>
         </div>
         <form onSubmit={submit} className="space-y-3">
           <input
             autoFocus
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-emerald-500 outline-none"
+            className="w-full px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none"
           />
           <div>
             <input
@@ -1646,10 +1646,10 @@ function EditEntryModal({
               min="0.01"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-emerald-500 outline-none"
+              className="w-full px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none"
             />
             {isDebt && (
-              <p className="text-xs text-slate-500 mt-2">
+              <p className="text-xs text-neutral-500 mt-2">
                 This is the starting balance the payoff plan measures progress against — editing it
                 doesn't change what's currently owed; log a payment or card usage for that.
               </p>
@@ -1664,7 +1664,7 @@ function EditEntryModal({
                 placeholder="APR % (optional)"
                 value={apr}
                 onChange={(e) => setApr(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-orange-500 outline-none"
+                className="w-full px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-rose-700 outline-none"
               />
               <input
                 type="number"
@@ -1673,7 +1673,7 @@ function EditEntryModal({
                 placeholder="Min payment / mo"
                 value={minPayment}
                 onChange={(e) => setMinPayment(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-orange-500 outline-none"
+                className="w-full px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-rose-700 outline-none"
               />
               <input
                 type="number"
@@ -1683,7 +1683,7 @@ function EditEntryModal({
                 placeholder="Due day (1–31)"
                 value={dueDay}
                 onChange={(e) => setDueDay(e.target.value)}
-                className="col-span-2 w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-orange-500 outline-none"
+                className="col-span-2 w-full px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-rose-700 outline-none"
               />
             </div>
           )}
@@ -1692,11 +1692,11 @@ function EditEntryModal({
             value={note}
             onChange={(e) => setNote(e.target.value)}
             rows={2}
-            className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-emerald-500 outline-none resize-none"
+            className="w-full px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none resize-none"
           />
           <button
             disabled={busy}
-            className="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold disabled:opacity-50"
+            className="w-full py-3 rounded-xl bg-red-500 hover:bg-red-400 text-neutral-950 font-semibold disabled:opacity-50"
           >
             {busy ? "Saving..." : "Save changes"}
           </button>
@@ -1786,18 +1786,18 @@ function SettingsModal({
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
-        className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md shadow-2xl flex flex-col max-h-[85vh]"
+        className="bg-neutral-900 border border-neutral-800 rounded-2xl w-full max-w-md shadow-2xl flex flex-col max-h-[85vh]"
       >
         <div className="p-6 pb-3 shrink-0">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-xl font-bold">Settings</h2>
-            <button onClick={onClose} aria-label="Close" className="text-slate-500 hover:text-white text-lg leading-none p-1">✕</button>
+            <button onClick={onClose} aria-label="Close" className="text-neutral-500 hover:text-white text-lg leading-none p-1">✕</button>
           </div>
-          <div className="flex bg-slate-800 border border-slate-700 rounded-xl p-1">
+          <div className="flex bg-neutral-800 border border-neutral-700 rounded-xl p-1">
             <button
               onClick={() => setTab("currency")}
               className={`flex-1 px-3 py-1.5 rounded-lg text-sm transition ${
-                tab === "currency" ? "bg-emerald-500 text-slate-950 font-semibold" : "text-slate-300"
+                tab === "currency" ? "bg-red-500 text-neutral-950 font-semibold" : "text-neutral-300"
               }`}
             >
               Currency
@@ -1805,7 +1805,7 @@ function SettingsModal({
             <button
               onClick={() => setTab("password")}
               className={`flex-1 px-3 py-1.5 rounded-lg text-sm transition ${
-                tab === "password" ? "bg-emerald-500 text-slate-950 font-semibold" : "text-slate-300"
+                tab === "password" ? "bg-red-500 text-neutral-950 font-semibold" : "text-neutral-300"
               }`}
             >
               Password
@@ -1816,7 +1816,7 @@ function SettingsModal({
         {tab === "currency" ? (
           <>
             <div className="px-6 pb-3 shrink-0">
-              <p className="text-slate-400 text-sm mb-4">
+              <p className="text-neutral-400 text-sm mb-4">
                 Everything is displayed in {currencySymbol(picked)} {picked}.
               </p>
               <input
@@ -1824,38 +1824,38 @@ function SettingsModal({
                 placeholder="Search currency (e.g. euro, CAD)"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-emerald-500 outline-none"
+                className="w-full px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none"
               />
             </div>
 
             <div className="flex-1 overflow-y-auto px-6 space-y-1 min-h-0">
-              {shown.length === 0 && <p className="text-sm text-slate-500 italic py-4">No currency matches that.</p>}
+              {shown.length === 0 && <p className="text-sm text-neutral-500 italic py-4">No currency matches that.</p>}
               {shown.map((o) => (
                 <button
                   key={o.code}
                   onClick={() => setPicked(o.code)}
                   className={`w-full text-left px-4 py-3 rounded-xl border transition flex items-center gap-3 ${
                     picked === o.code
-                      ? "bg-emerald-500/15 border-emerald-500/50"
-                      : "bg-slate-800/60 border-slate-700/60 hover:border-slate-600"
+                      ? "bg-red-500/15 border-red-500/50"
+                      : "bg-neutral-800/60 border-neutral-700/60 hover:border-neutral-600"
                   }`}
                 >
-                  <span className="w-12 shrink-0 font-semibold tabular-nums text-slate-300">{o.symbol}</span>
+                  <span className="w-12 shrink-0 font-semibold tabular-nums text-neutral-300">{o.symbol}</span>
                   <span className="flex-1 min-w-0">
                     <span className="font-medium">{o.code}</span>
-                    <span className="block text-xs text-slate-500 truncate">{o.name}</span>
+                    <span className="block text-xs text-neutral-500 truncate">{o.name}</span>
                   </span>
-                  {picked === o.code && <span className="text-emerald-400 shrink-0">✓</span>}
+                  {picked === o.code && <span className="text-red-400 shrink-0">✓</span>}
                 </button>
               ))}
             </div>
 
-            <div className="p-6 pt-4 shrink-0 border-t border-slate-800">
+            <div className="p-6 pt-4 shrink-0 border-t border-neutral-800">
               {error && <p className="text-rose-400 text-sm mb-3">{error}</p>}
               <button
                 onClick={save}
                 disabled={busy}
-                className="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold disabled:opacity-50"
+                className="w-full py-3 rounded-xl bg-red-500 hover:bg-red-400 text-neutral-950 font-semibold disabled:opacity-50"
               >
                 {busy ? "Saving..." : "Save"}
               </button>
@@ -1870,7 +1870,7 @@ function SettingsModal({
               placeholder="Current password"
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-emerald-500 outline-none"
+              className="w-full px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none"
             />
             <input
               type="password"
@@ -1879,7 +1879,7 @@ function SettingsModal({
               placeholder="New password (min 6 chars)"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-emerald-500 outline-none"
+              className="w-full px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none"
             />
             <input
               type="password"
@@ -1887,13 +1887,13 @@ function SettingsModal({
               placeholder="Confirm new password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-emerald-500 outline-none"
+              className="w-full px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none"
             />
             {pwError && <p className="text-rose-400 text-sm">{pwError}</p>}
-            {pwSuccess && <p className="text-emerald-400 text-sm">Password changed.</p>}
+            {pwSuccess && <p className="text-red-400 text-sm">Password changed.</p>}
             <button
               disabled={pwBusy}
-              className="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold disabled:opacity-50"
+              className="w-full py-3 rounded-xl bg-red-500 hover:bg-red-400 text-neutral-950 font-semibold disabled:opacity-50"
             >
               {pwBusy ? "Saving..." : "Change password"}
             </button>
@@ -1930,15 +1930,15 @@ function PaySourceModal({
         role="dialog"
         aria-modal="true"
         aria-label={pickingDebt ? "Which card or loan?" : `Mark "${label}" as paid`}
-        className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl max-h-[85vh] overflow-y-auto"
+        className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 w-full max-w-md shadow-2xl max-h-[85vh] overflow-y-auto"
       >
         <div className="flex items-center justify-between mb-1">
           <h2 className="text-xl font-bold">
             {pickingDebt ? "Which card or loan?" : `Mark "${label}" as paid`}
           </h2>
-          <button onClick={onClose} aria-label="Close" className="text-slate-500 hover:text-white">✕</button>
+          <button onClick={onClose} aria-label="Close" className="text-neutral-500 hover:text-white">✕</button>
         </div>
-        <p className="text-slate-400 text-sm mb-4">
+        <p className="text-neutral-400 text-sm mb-4">
           {pickingDebt
             ? `${fmt(amount)} gets added to the debt you pick.`
             : `${fmt(amount)} — where did this payment come from?`}
@@ -1951,17 +1951,17 @@ function PaySourceModal({
                 key={d.id}
                 disabled={busy}
                 onClick={() => onChoose("debt", d.id)}
-                className="w-full text-left px-4 py-3 rounded-xl border border-orange-500/40 bg-orange-500/10 hover:bg-orange-500/20 transition disabled:opacity-50"
+                className="w-full text-left px-4 py-3 rounded-xl border border-rose-700/40 bg-rose-700/10 hover:bg-rose-700/20 transition disabled:opacity-50"
               >
-                <p className="font-semibold text-orange-300">{d.label}</p>
-                <p className="text-xs text-slate-400 mt-0.5">
+                <p className="font-semibold text-rose-400">{d.label}</p>
+                <p className="text-xs text-neutral-400 mt-0.5">
                   {fmt(d.amount)} owed → {fmt(d.amount + amount)} after this
                 </p>
               </button>
             ))}
             <button
               onClick={() => setPickingDebt(false)}
-              className="w-full px-4 py-2.5 rounded-xl border border-slate-700 text-slate-400 hover:text-white text-sm"
+              className="w-full px-4 py-2.5 rounded-xl border border-neutral-700 text-neutral-400 hover:text-white text-sm"
             >
               Back
             </button>
@@ -1971,26 +1971,26 @@ function PaySourceModal({
             <button
               disabled={busy}
               onClick={() => onChoose("balance")}
-              className="w-full text-left px-4 py-3 rounded-xl border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 transition disabled:opacity-50"
+              className="w-full text-left px-4 py-3 rounded-xl border border-red-500/40 bg-red-500/10 hover:bg-red-500/20 transition disabled:opacity-50"
             >
-              <p className="font-semibold text-emerald-300">From balance</p>
-              <p className="text-xs text-slate-400 mt-0.5">Deducted from your tracked income — reduces balance.</p>
+              <p className="font-semibold text-red-300">From balance</p>
+              <p className="text-xs text-neutral-400 mt-0.5">Deducted from your tracked income — reduces balance.</p>
             </button>
             <button
               disabled={busy}
               onClick={() => onChoose("off")}
-              className="w-full text-left px-4 py-3 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 transition disabled:opacity-50"
+              className="w-full text-left px-4 py-3 rounded-xl border border-neutral-700 bg-neutral-800 hover:bg-neutral-700 transition disabled:opacity-50"
             >
               <p className="font-semibold text-white">Off balance</p>
-              <p className="text-xs text-slate-400 mt-0.5">Paid from outside money — balance stays unaffected.</p>
+              <p className="text-xs text-neutral-400 mt-0.5">Paid from outside money — balance stays unaffected.</p>
             </button>
             <button
               disabled={busy || debts.length === 0}
               onClick={() => setPickingDebt(true)}
-              className="w-full text-left px-4 py-3 rounded-xl border border-orange-500/40 bg-orange-500/10 hover:bg-orange-500/20 transition disabled:opacity-40"
+              className="w-full text-left px-4 py-3 rounded-xl border border-rose-700/40 bg-rose-700/10 hover:bg-rose-700/20 transition disabled:opacity-40"
             >
-              <p className="font-semibold text-orange-300">Paid with card / debt</p>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className="font-semibold text-rose-400">Paid with card / debt</p>
+              <p className="text-xs text-neutral-400 mt-0.5">
                 {debts.length === 0
                   ? "No debts logged yet — add one to use this."
                   : "Balance untouched; the amount is added to what you owe."}
@@ -2045,13 +2045,13 @@ function DebtPaymentModal({
         role="dialog"
         aria-modal="true"
         aria-label={`Payments — ${label}`}
-        className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl max-h-[85vh] overflow-y-auto"
+        className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 w-full max-w-md shadow-2xl max-h-[85vh] overflow-y-auto"
       >
         <div className="flex items-center justify-between mb-1">
           <h2 className="text-xl font-bold">Payments — {label}</h2>
-          <button onClick={onClose} aria-label="Close" className="text-slate-500 hover:text-white">✕</button>
+          <button onClick={onClose} aria-label="Close" className="text-neutral-500 hover:text-white">✕</button>
         </div>
-        <p className="text-slate-400 text-sm mb-4">
+        <p className="text-neutral-400 text-sm mb-4">
           {fmt(remaining)} remaining · started at {fmt(originalAmount)}
         </p>
 
@@ -2062,8 +2062,8 @@ function DebtPaymentModal({
               onClick={() => setKind("payment")}
               className={`px-3 py-2.5 rounded-xl border text-sm font-medium transition ${
                 kind === "payment"
-                  ? "bg-emerald-500/20 border-emerald-500 text-emerald-200"
-                  : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+                  ? "bg-red-500/20 border-red-500 text-red-200"
+                  : "bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-white"
               }`}
             >
               Payment
@@ -2074,13 +2074,13 @@ function DebtPaymentModal({
               className={`px-3 py-2.5 rounded-xl border text-sm font-medium transition ${
                 kind === "charge"
                   ? "bg-rose-500/20 border-rose-500 text-rose-200"
-                  : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+                  : "bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-white"
               }`}
             >
               Card usage
             </button>
           </div>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-neutral-500">
             {kind === "payment"
               ? "Money you paid toward this debt — reduces what you owe."
               : "New spending on this card — increases what you owe."}
@@ -2092,8 +2092,8 @@ function DebtPaymentModal({
                 onClick={() => setFromBalance(true)}
                 className={`px-3 py-2 rounded-xl border text-xs font-medium transition ${
                   fromBalance
-                    ? "bg-sky-500/20 border-sky-500 text-sky-200"
-                    : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+                    ? "bg-neutral-400/20 border-neutral-400 text-white"
+                    : "bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-white"
                 }`}
               >
                 From balance
@@ -2103,13 +2103,13 @@ function DebtPaymentModal({
                 onClick={() => setFromBalance(false)}
                 className={`px-3 py-2 rounded-xl border text-xs font-medium transition ${
                   !fromBalance
-                    ? "bg-slate-600/40 border-slate-500 text-white"
-                    : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+                    ? "bg-neutral-600/40 border-neutral-500 text-white"
+                    : "bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-white"
                 }`}
               >
                 Off balance
               </button>
-              <p className="col-span-2 text-[11px] text-slate-500">
+              <p className="col-span-2 text-[11px] text-neutral-500">
                 {fromBalance
                   ? "Paid with tracked money — your Balance goes down."
                   : "Paid with outside money — Balance unaffected."}
@@ -2124,47 +2124,47 @@ function DebtPaymentModal({
             placeholder={kind === "payment" ? "Payment amount" : "Amount spent"}
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-orange-500 outline-none"
+            className="w-full px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-rose-700 outline-none"
           />
           <input
             placeholder="Note (optional)"
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:border-orange-500 outline-none"
+            className="w-full px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-rose-700 outline-none"
           />
           <button
             disabled={busy}
-            className="w-full py-3 rounded-xl bg-orange-500 hover:bg-orange-400 text-slate-950 font-semibold disabled:opacity-50"
+            className="w-full py-3 rounded-xl bg-rose-700 hover:bg-rose-600 text-neutral-950 font-semibold disabled:opacity-50"
           >
             {busy ? "Logging..." : kind === "payment" ? "Log payment" : "Log card usage"}
           </button>
         </form>
 
-        <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">History</p>
+        <p className="text-xs uppercase tracking-wider text-neutral-500 mb-2">History</p>
         {history.length === 0 ? (
-          <p className="text-sm text-slate-500 italic">No payments logged yet.</p>
+          <p className="text-sm text-neutral-500 italic">No payments logged yet.</p>
         ) : (
           <div className="space-y-1.5">
             {history.map((p) => (
               <div
                 key={p.id}
-                className="flex items-center justify-between gap-2 bg-slate-800/60 border border-slate-700 rounded-lg px-3 py-2"
+                className="flex items-center justify-between gap-2 bg-neutral-800/60 border border-neutral-700 rounded-lg px-3 py-2"
               >
                 <div className="min-w-0">
-                  <p className={`font-medium tabular-nums ${p.kind === "charge" ? "text-rose-300" : "text-emerald-300"}`}>
+                  <p className={`font-medium tabular-nums ${p.kind === "charge" ? "text-rose-300" : "text-red-300"}`}>
                     {p.kind === "charge" ? `+${fmt(p.amount)}` : `−${fmt(p.amount)}`}
-                    <span className="ml-2 text-[10px] uppercase tracking-wider text-slate-500">
+                    <span className="ml-2 text-[10px] uppercase tracking-wider text-neutral-500">
                       {p.kind === "charge" ? "Usage" : p.fromBalance ? "Payment · from balance" : "Payment · off balance"}
                     </span>
                   </p>
-                  <p className="text-xs text-slate-500 truncate">
+                  <p className="text-xs text-neutral-500 truncate">
                     {new Date(p.paidAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
                     {p.note ? ` · ${p.note}` : ""}
                   </p>
                 </div>
                 <button
                   onClick={() => onUndo(p.id)}
-                  className="text-xs text-slate-500 hover:text-rose-400 shrink-0"
+                  className="text-xs text-neutral-500 hover:text-rose-400 shrink-0"
                 >
                   Undo
                 </button>
@@ -2190,12 +2190,12 @@ function PayoffChart({ timeline }: { timeline: number[] }) {
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-28" preserveAspectRatio="none" aria-label="Debt balance over time">
       <defs>
         <linearGradient id="payoffFill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#f97316" stopOpacity="0.35" />
-          <stop offset="100%" stopColor="#f97316" stopOpacity="0" />
+          <stop offset="0%" stopColor="#be123c" stopOpacity="0.35" />
+          <stop offset="100%" stopColor="#be123c" stopOpacity="0" />
         </linearGradient>
       </defs>
       <polygon points={area} fill="url(#payoffFill)" />
-      <polyline points={pts} fill="none" stroke="#f97316" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+      <polyline points={pts} fill="none" stroke="#be123c" strokeWidth="2" vectorEffect="non-scaling-stroke" />
     </svg>
   );
 }
