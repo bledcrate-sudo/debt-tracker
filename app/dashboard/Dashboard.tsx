@@ -44,15 +44,20 @@ export default function Dashboard({
   userEmail,
   userName,
   userCurrency,
+  userBalanceAdjustment,
 }: {
   initialEntries: Entry[];
   userEmail: string;
   userName: string | null;
   userCurrency: string;
+  userBalanceAdjustment: number;
 }) {
   const [currency, setCurrency] = useState(userCurrency);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const fmt = useMemo(() => makeFmt(currency), [currency]);
+
+  const [balanceAdjustment, setBalanceAdjustment] = useState(userBalanceAdjustment);
+  const [adjustBalanceOpen, setAdjustBalanceOpen] = useState(false);
 
   // The iOS build is a thin webview over the deployed site with no offline
   // cache, so losing the network mid-session otherwise fails silently.
@@ -258,7 +263,7 @@ export default function Dashboard({
     const months: string[] = [];
     for (let m = startMonth; m <= currentMonth; m = shiftMonth(m, 1)) months.push(m);
 
-    let carry = 0;
+    let carry = balanceAdjustment;
     return months.map((month) => {
       const inc = income.filter((e) => activeIn(e, month));
       const exp = expenses.filter((e) => activeIn(e, month));
@@ -313,7 +318,7 @@ export default function Dashboard({
         available: closing - billsUnpaid,
       };
     });
-  }, [income, expenses, purchases, startMonth, currentMonth]);
+  }, [income, expenses, purchases, startMonth, currentMonth, balanceAdjustment]);
 
   const monthRow = useMemo(
     () => ledger.find((r) => r.month === selectedMonth) ?? ledger[ledger.length - 1],
@@ -425,6 +430,28 @@ export default function Dashboard({
     setEntries((cur) => cur.map((e) => (e.id === id ? { ...e, ...updated } : e)));
   }
 
+  const [adjustBalanceBusy, setAdjustBalanceBusy] = useState(false);
+
+  // Lets someone correct the tracked balance to match reality (e.g. their
+  // real bank balance) without having to log it as an Income entry. Stored
+  // as a running offset folded into the ledger's starting carry, so it
+  // shows up in every month from here on rather than just one.
+  async function adjustBalanceTo(newBalance: number) {
+    const delta = newBalance - balance;
+    const nextAdjustment = balanceAdjustment + delta;
+    setAdjustBalanceBusy(true);
+    const r = await fetch("/api/settings/balance", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ balanceAdjustment: nextAdjustment }),
+    });
+    setAdjustBalanceBusy(false);
+    if (!r.ok) return reportError(r, "Failed to update balance");
+    const updated = await r.json();
+    setBalanceAdjustment(updated.balanceAdjustment);
+    setAdjustBalanceOpen(false);
+  }
+
   const suggestions = buildSuggestions({
     fmt,
     totalIncome,
@@ -525,6 +552,7 @@ export default function Dashboard({
               ? `${fmt(monthRow.carryIn)} carried in`
               : "Left at end of this month"
           }
+          onEdit={() => setAdjustBalanceOpen(true)}
         />
         <StatCard
           label="Bills"
@@ -980,6 +1008,15 @@ export default function Dashboard({
           onSubmit={(patch) => updateEntry(editEntry.id, patch)}
         />
       )}
+
+      {adjustBalanceOpen && (
+        <AdjustBalanceModal
+          currentBalance={balance}
+          busy={adjustBalanceBusy}
+          onClose={() => setAdjustBalanceOpen(false)}
+          onSave={adjustBalanceTo}
+        />
+      )}
     </main>
     </CurrencyContext.Provider>
   );
@@ -1199,11 +1236,13 @@ function StatCard({
   value,
   accent,
   sub,
+  onEdit,
 }: {
   label: string;
   value: string;
   accent: "red" | "rose" | "maroon" | "highlight" | "crimson";
   sub?: string;
+  onEdit?: () => void;
 }) {
   const colors: Record<string, string> = {
     red: "from-red-500/20 to-red-500/0 border-red-500/30",
@@ -1213,8 +1252,20 @@ function StatCard({
     crimson: "from-red-600/20 to-red-600/0 border-red-600/30",
   };
   return (
-    <div className={`bg-gradient-to-br ${colors[accent]} border rounded-2xl p-4`}>
-      <p className="text-xs uppercase tracking-wider opacity-80">{label}</p>
+    <div className={`relative bg-gradient-to-br ${colors[accent]} border rounded-2xl p-4`}>
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-xs uppercase tracking-wider opacity-80">{label}</p>
+        {onEdit && (
+          <button
+            onClick={onEdit}
+            title={`Edit ${label.toLowerCase()}`}
+            aria-label={`Edit ${label.toLowerCase()}`}
+            className="text-neutral-400 hover:text-white -mt-1 -mr-1 p-1"
+          >
+            ✎
+          </button>
+        )}
+      </div>
       <p className="text-2xl font-bold mt-2 tabular-nums text-white">{value}</p>
       {sub && <p className="text-xs text-neutral-400 mt-1">{sub}</p>}
     </div>
@@ -1663,6 +1714,66 @@ function EditEntryModal({
             className="w-full py-3 rounded-xl bg-gradient-to-b from-red-500 to-red-600 hover:to-red-500 text-neutral-950 font-semibold shadow-lg shadow-red-950/50 disabled:opacity-50"
           >
             {busy ? "Saving..." : "Save changes"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function AdjustBalanceModal({
+  currentBalance,
+  busy,
+  onClose,
+  onSave,
+}: {
+  currentBalance: number;
+  busy: boolean;
+  onClose: () => void;
+  onSave: (newBalance: number) => void;
+}) {
+  useEscapeClose(onClose);
+  const fmt = useContext(CurrencyContext);
+  const [value, setValue] = useState(currentBalance.toFixed(2));
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    const n = parseFloat(value);
+    if (isNaN(n)) return;
+    onSave(n);
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm grid place-items-center z-50 p-4" onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Adjust balance"
+        className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 w-full max-w-md shadow-2xl"
+      >
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-xl font-bold">Adjust balance</h2>
+          <button onClick={onClose} aria-label="Close" className="text-neutral-500 hover:text-white">✕</button>
+        </div>
+        <p className="text-neutral-400 text-sm mb-4">
+          Set your balance to match reality — e.g. your real bank balance — without logging it as
+          income. Currently {fmt(currentBalance)}.
+        </p>
+        <form onSubmit={submit} className="space-y-3">
+          <input
+            autoFocus
+            type="number"
+            step="0.01"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            className="w-full px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none text-lg tabular-nums"
+          />
+          <button
+            disabled={busy}
+            className="w-full py-3 rounded-xl bg-gradient-to-b from-red-500 to-red-600 hover:to-red-500 text-neutral-950 font-semibold shadow-lg shadow-red-950/50 disabled:opacity-50"
+          >
+            {busy ? "Saving..." : "Save balance"}
           </button>
         </form>
       </div>

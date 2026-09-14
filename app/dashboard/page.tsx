@@ -10,7 +10,7 @@ export default async function DashboardPage() {
   const userId = session.user.id;
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { currency: true },
+    select: { currency: true, balanceAdjustment: true },
   });
   const entries = await prisma.entry.findMany({
     where: { userId },
@@ -41,6 +41,7 @@ export default async function DashboardPage() {
       userEmail={session.user?.email ?? ""}
       userName={session.user?.name ?? null}
       userCurrency={user?.currency ?? "USD"}
+      userBalanceAdjustment={user?.balanceAdjustment ?? 0}
     />
   );
 }

@@ -13,6 +13,10 @@ model User {
   password  String
   name      String?
   currency  String   @default("USD")
+  // Manual correction folded into the running balance (e.g. to match your
+  // real bank balance) without needing an Income entry. Applied once, at
+  // the start of the ledger, and carried forward through every month.
+  balanceAdjustment Float @default(0)
   createdAt DateTime @default(now())
   entries   Entry[]
 }
