@@ -40,6 +40,23 @@ Sandbox is free and unlimited. Moving to real accounts needs Plaid's Trial plan 
 `PLAID_ALLOWED_EMAILS` to your login email. Live mode refuses to link banks without it: sign-up is
 open, and every Item a stranger linked would count permanently against the 10-Item cap.
 
+### Connecting a bank (SimpleFIN)
+
+For banks Plaid doesn't cover, [SimpleFIN Bridge](https://beta-bridge.simplefin.org) (~$15/year,
+US and Canada) works alongside it — no developer account needed:
+
+1. Sign up at SimpleFIN Bridge, connect your bank there, then create a new connection to get a
+   one-time **setup token**.
+2. In the app: Settings → Bank → paste the token → "Connect with SimpleFIN".
+3. SimpleFIN doesn't report account types, so each account starts as a guess (negative balance
+   or a card/loan name → Debt, otherwise Cash). Change any account to Cash, Debt, or Ignore in
+   the Bank tab.
+
+Debt accounts sync their balance (APR, minimum payment and due date aren't provided — enter them
+once). Cash accounts import spending as purchases and count toward the bank balance you can apply.
+SimpleFIN refreshes about once a day and allows ~24 requests a day, so syncs within 10 minutes of
+the last one are skipped. The Access URL is stored encrypted with `PLAID_TOKEN_ENCRYPTION_KEY`.
+
 ## Stack
 
 - Next.js 14 (App Router) + React 18
@@ -58,8 +75,8 @@ open, and every Item a stranger linked would count permanently against the 10-It
   "what if I paid more" calculator
 - Per-account currency setting
 - Edit or delete any entry; per-user data isolation enforced at the API layer
-- Optional Plaid integration: link multiple banks, auto-sync credit card/loan balances and
-  terms, import recent checking-account transactions
+- Optional bank sync via Plaid and/or SimpleFIN: link multiple banks, auto-sync credit card/loan
+  balances, import recent chequing-account spending
 
 ## Testing
 

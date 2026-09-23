@@ -20,6 +20,7 @@ model User {
   createdAt DateTime @default(now())
   entries   Entry[]
   plaidItems PlaidItem[]
+  simplefinConnections SimplefinConnection[]
 }
 
 model Entry {
@@ -49,6 +50,8 @@ model Entry {
   // Set on a debt Entry created automatically from a linked Plaid credit
   // card / loan account.
   plaidAccount PlaidAccount? @relation("PlaidAccountEntry")
+  // Same, for a card/loan synced through SimpleFIN.
+  simplefinAccount SimplefinAccount? @relation("SimplefinAccountEntry")
 
   @@index([userId])
   @@index([debtEntryId])
@@ -140,4 +143,59 @@ model PlaidTransaction {
   createdAt     DateTime  @default(now())
 
   @@index([plaidItemId])
+}
+
+// A SimpleFIN Bridge connection (simplefin.org): an alternative to Plaid for
+// banks Plaid doesn't cover. One connection can hold several banks — they're
+// all managed on the SimpleFIN site, behind one Access URL.
+model SimplefinConnection {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // AES-256-GCM ciphertext of the Access URL, which embeds its own Basic
+  // Auth credentials (see lib/plaid-crypto.ts) — never store this raw.
+  accessUrl    String
+  status       String    @default("active") // "active" | "error"
+  error        String?
+  lastSyncedAt DateTime?
+  createdAt    DateTime  @default(now())
+  accounts     SimplefinAccount[]
+  transactions SimplefinTransaction[]
+
+  @@index([userId])
+}
+
+model SimplefinAccount {
+  id           String              @id @default(cuid())
+  connectionId String
+  connection   SimplefinConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  accountId    String // SimpleFIN account id — only unique within a connection
+  orgName      String?
+  name         String
+  currency     String
+  // SimpleFIN doesn't report account types, so this starts as a guess (see
+  // guessKind in lib/simplefin.ts) and the user can change it:
+  // "cash" imports spending as purchases, "debt" mirrors into a debt Entry,
+  // "ignore" skips the account.
+  kind         String
+  entryId      String?  @unique
+  entry        Entry?   @relation("SimplefinAccountEntry", fields: [entryId], references: [id], onDelete: SetNull)
+  // Amount owed (debt) or balance (cash) at the last sync; debt syncs record
+  // the change as a charge/payment instead of overwriting the Entry.
+  lastBalance  Float?
+  lastSyncedAt DateTime?
+
+  @@unique([connectionId, accountId])
+  @@index([connectionId])
+}
+
+// Transactions already imported as purchases. SimpleFIN ids are only unique
+// within an account, so the key is "<account row id>:<transaction id>".
+model SimplefinTransaction {
+  key          String              @id
+  connectionId String
+  connection   SimplefinConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  createdAt    DateTime            @default(now())
+
+  @@index([connectionId])
 }

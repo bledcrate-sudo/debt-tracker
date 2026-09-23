@@ -2024,6 +2024,24 @@ type PlaidItemRow = {
 // automatically (see lib/plaid-sync.ts); the checking/savings total is
 // surfaced here rather than applied silently, since blindly overwriting the
 // tracked balance could clash with edits already made for past months.
+type SimplefinAccountRow = {
+  id: string;
+  orgName: string | null;
+  name: string;
+  currency: string;
+  kind: "cash" | "debt" | "ignore";
+  lastBalance: number | null;
+  entryId: string | null;
+};
+
+type SimplefinConnRow = {
+  id: string;
+  status: string;
+  error: string | null;
+  lastSyncedAt: string | null;
+  accounts: SimplefinAccountRow[];
+};
+
 function BankTab({
   currentBalance,
   onChanged,
@@ -2044,8 +2062,14 @@ function BankTab({
     const r = await fetch("/api/plaid/items");
     if (r.ok) setItems(await r.json());
   }
+  const [sfConns, setSfConns] = useState<SimplefinConnRow[] | null>(null);
+  async function loadSimplefin() {
+    const r = await fetch("/api/simplefin/connections");
+    if (r.ok) setSfConns(await r.json());
+  }
   useEffect(() => {
     loadItems();
+    loadSimplefin();
   }, []);
 
   const { open, ready } = usePlaidLink({
@@ -2118,16 +2142,19 @@ function BankTab({
   }
 
   const depositoryTotal = useMemo(() => {
-    const accounts = (items ?? []).flatMap((i) => i.accounts).filter((a) => a.type === "depository");
-    if (accounts.length === 0) return null;
-    return accounts.reduce((s, a) => s + (a.lastBalance ?? 0), 0);
-  }, [items]);
+    const balances = [
+      ...(items ?? []).flatMap((i) => i.accounts).filter((a) => a.type === "depository"),
+      ...(sfConns ?? []).flatMap((c) => c.accounts).filter((a) => a.kind === "cash"),
+    ].map((a) => a.lastBalance ?? 0);
+    if (balances.length === 0) return null;
+    return balances.reduce((s, b) => s + b, 0);
+  }, [items, sfConns]);
 
   return (
     <div className="p-6 pt-3 space-y-4 overflow-y-auto">
       <p className="text-neutral-400 text-sm">
-        Connect a bank to auto-track credit cards and loans — balance, APR, minimum payment, and
-        due date sync in automatically. Connect as many banks as you like.
+        Connect your banks to auto-track credit cards and loans and import spending. Use Plaid or
+        SimpleFIN — whichever supports your bank — and connect as many as you like.
       </p>
 
       {error && <p className="text-rose-400 text-sm">{error}</p>}
@@ -2135,7 +2162,7 @@ function BankTab({
       {depositoryTotal !== null && (
         <div className="bg-neutral-800/60 border border-neutral-700/60 rounded-xl p-4 space-y-2">
           <p className="text-sm text-neutral-400">
-            Checking/savings balance from your bank: <span className="text-white font-semibold">{fmt(depositoryTotal)}</span>
+            Chequing/savings balance from your banks: <span className="text-white font-semibold">{fmt(depositoryTotal)}</span>
           </p>
           {Math.abs(depositoryTotal - currentBalance) > 0.005 && (
             <button
@@ -2148,6 +2175,7 @@ function BankTab({
         </div>
       )}
 
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500 pt-1">Plaid</h3>
       <div className="space-y-2">
         {items === null && <p className="text-sm text-neutral-500 italic">Loading…</p>}
         {items?.length === 0 && (
@@ -2200,8 +2228,180 @@ function BankTab({
         disabled={busy}
         className="w-full py-3 rounded-xl bg-gradient-to-b from-red-500 to-red-600 hover:to-red-500 text-neutral-950 font-semibold shadow-lg shadow-red-950/50 disabled:opacity-50"
       >
-        {busy ? "Connecting…" : "Connect a bank"}
+        {busy ? "Connecting…" : "Connect a bank with Plaid"}
       </button>
+
+      <SimplefinSection
+        conns={sfConns}
+        reload={loadSimplefin}
+        onChanged={onChanged}
+        onError={setError}
+      />
+    </div>
+  );
+}
+
+// SimpleFIN Bridge: the user connects banks on simplefin.org and pastes a
+// one-time setup token here. SimpleFIN has no account types, so each account
+// shows its guessed kind with a picker to correct it.
+function SimplefinSection({
+  conns,
+  reload,
+  onChanged,
+  onError,
+}: {
+  conns: SimplefinConnRow[] | null;
+  reload: () => Promise<void>;
+  onChanged: () => void;
+  onError: (msg: string | null) => void;
+}) {
+  const fmt = useContext(CurrencyContext);
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [workingId, setWorkingId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  async function connect(e: React.FormEvent) {
+    e.preventDefault();
+    onError(null);
+    setNotice(null);
+    setBusy(true);
+    const r = await fetch("/api/simplefin/connect", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ setupToken: token.trim() }),
+    });
+    setBusy(false);
+    const body = await r.json().catch(() => null);
+    if (!r.ok) return onError(body?.error ?? "Failed to connect SimpleFIN");
+    setToken("");
+    if (body?.syncError) setNotice(`Connected, but the first sync failed: ${body.syncError}. Try "Sync now" later.`);
+    await reload();
+    onChanged();
+  }
+
+  async function sync(connectionId: string, force = false) {
+    setWorkingId(connectionId);
+    onError(null);
+    setNotice(null);
+    const r = await fetch("/api/simplefin/sync", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ connectionId, force }),
+    });
+    setWorkingId(null);
+    const body = await r.json().catch(() => null);
+    if (!r.ok) return onError(body?.error ?? "Sync failed");
+    const result = body?.results?.[connectionId];
+    if (result?.error) onError(result.error);
+    else if (result?.skipped === "cooldown")
+      setNotice("Synced a few minutes ago — SimpleFIN only refreshes about once a day, so there's nothing new yet.");
+    await reload();
+    onChanged();
+  }
+
+  async function setKind(connectionId: string, accountId: string, kind: string) {
+    setWorkingId(connectionId);
+    const r = await fetch(`/api/simplefin/accounts/${accountId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind }),
+    });
+    setWorkingId(null);
+    if (!r.ok) return onError("Failed to change account type");
+    await sync(connectionId, true);
+  }
+
+  async function remove(connectionId: string) {
+    if (!confirm("Remove this SimpleFIN connection? Debts it created stay, but stop auto-updating. Also disable this app on the SimpleFIN Bridge site.")) return;
+    setWorkingId(connectionId);
+    const r = await fetch(`/api/simplefin/connections/${connectionId}`, { method: "DELETE" });
+    setWorkingId(null);
+    if (!r.ok) return onError("Failed to remove");
+    await reload();
+    onChanged();
+  }
+
+  return (
+    <div className="space-y-2 pt-2">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">SimpleFIN</h3>
+      {notice && <p className="text-sm text-neutral-400">{notice}</p>}
+      {conns === null && <p className="text-sm text-neutral-500 italic">Loading…</p>}
+      {conns?.map((c) => (
+        <div key={c.id} className="bg-neutral-800/60 border border-neutral-700/60 rounded-xl p-4">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className="min-w-0">
+              <p className="font-semibold">SimpleFIN Bridge</p>
+              <p className="text-xs text-neutral-500">
+                {c.lastSyncedAt ? `Synced ${new Date(c.lastSyncedAt).toLocaleString()}` : "Not synced yet"}
+              </p>
+              {c.error && (
+                <p className={`text-xs ${c.status === "error" ? "text-rose-400" : "text-amber-400"}`}>{c.error}</p>
+              )}
+            </div>
+            <div className="flex gap-2 shrink-0">
+              <button
+                onClick={() => sync(c.id)}
+                disabled={workingId === c.id}
+                className="text-xs px-2.5 py-1.5 rounded-lg bg-neutral-700/60 hover:bg-neutral-700 disabled:opacity-50"
+              >
+                {workingId === c.id ? "Syncing…" : "Sync now"}
+              </button>
+              <button
+                onClick={() => remove(c.id)}
+                disabled={workingId === c.id}
+                className="text-xs px-2.5 py-1.5 rounded-lg bg-neutral-700/60 hover:bg-rose-500/20 hover:text-rose-300 disabled:opacity-50"
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            {c.accounts.map((a) => (
+              <div key={a.id} className="flex items-center justify-between gap-2 text-sm text-neutral-400">
+                <span className="min-w-0">
+                  {a.name}
+                  {a.orgName && <span className="text-neutral-600"> · {a.orgName}</span>}
+                </span>
+                <span className="flex items-center gap-2 shrink-0">
+                  <span className="tabular-nums">{a.lastBalance != null ? fmt(a.lastBalance) : "—"}</span>
+                  <select
+                    value={a.kind}
+                    disabled={workingId === c.id}
+                    onChange={(e) => setKind(c.id, a.id, e.target.value)}
+                    aria-label={`Account type for ${a.name}`}
+                    className="bg-neutral-800 border border-neutral-700 rounded-lg px-1.5 py-1 text-xs text-neutral-200"
+                  >
+                    <option value="cash">Cash</option>
+                    <option value="debt">Debt</option>
+                    <option value="ignore">Ignore</option>
+                  </select>
+                </span>
+              </div>
+            ))}
+            {c.accounts.length === 0 && <p className="text-xs text-neutral-500 italic">No accounts yet.</p>}
+          </div>
+        </div>
+      ))}
+      <form onSubmit={connect} className="space-y-2">
+        <input
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          placeholder="Paste SimpleFIN setup token"
+          autoComplete="off"
+          spellCheck={false}
+          className="w-full px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none text-sm"
+        />
+        <button
+          disabled={busy || !token.trim()}
+          className="w-full py-3 rounded-xl border border-red-500/50 bg-red-500/10 text-red-300 font-semibold hover:bg-red-500/20 disabled:opacity-50"
+        >
+          {busy ? "Connecting…" : "Connect with SimpleFIN"}
+        </button>
+        <p className="text-xs text-neutral-500">
+          Get a token at beta-bridge.simplefin.org → your account → New connection. Each token works once.
+        </p>
+      </form>
     </div>
   );
 }
