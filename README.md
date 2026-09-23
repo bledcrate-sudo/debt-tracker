@@ -31,6 +31,10 @@ them by hand:
    independently. Credit/loan accounts sync automatically; a checking/savings balance is shown
    for you to apply manually so it doesn't clash with balance history you've already entered.
 
+Liabilities (card APR, minimum payment, due date) is requested as an optional product, since
+only some banks — especially in Canada — support it. Any bank with transactions can link; where
+Liabilities isn't available, cards and loans still sync their balance and you fill in the rest.
+
 Sandbox is free and unlimited. Moving to real accounts needs Plaid's Trial plan (also free, up to
 10 linked accounts) — just swap `PLAID_ENV` to `production` and use your production `secret`.
 

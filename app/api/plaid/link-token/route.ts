@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { plaidClient, PLAID_PRODUCTS, PLAID_COUNTRY_CODES } from "@/lib/plaid";
+import { plaidClient, PLAID_PRODUCTS, PLAID_OPTIONAL_PRODUCTS, PLAID_COUNTRY_CODES } from "@/lib/plaid";
 import { currentUserId } from "@/lib/session";
 
 // Creates a fresh Link token for the "connect a bank" button. No item_id is
@@ -14,6 +14,7 @@ export async function POST() {
       user: { client_user_id: userId },
       client_name: "Debt Tracker",
       products: PLAID_PRODUCTS,
+      optional_products: PLAID_OPTIONAL_PRODUCTS.length ? PLAID_OPTIONAL_PRODUCTS : undefined,
       country_codes: PLAID_COUNTRY_CODES,
       language: "en",
     });
