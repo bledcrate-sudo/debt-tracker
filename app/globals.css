@@ -4,7 +4,20 @@
 
 :root { color-scheme: dark; }
 
-html, body { height: 100%; }
+/* Dark behind iOS rubber-band scrolling too, not just the page body. */
+html, body { height: 100%; background: #0a0a0a; }
+
+html {
+  -webkit-text-size-adjust: 100%;
+  /* No grey flash on tap, no double-tap-zoom delay (the iOS app is a webview). */
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* iOS zooms the page when focusing a field under 16px; keep phone fields at 16px. */
+@media (max-width: 767px) {
+  input, select, textarea { font-size: 16px !important; }
+}
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #404040; border-radius: 8px; }

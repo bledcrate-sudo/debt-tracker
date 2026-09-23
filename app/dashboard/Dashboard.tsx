@@ -68,6 +68,18 @@ export default function Dashboard({
 }) {
   const [currency, setCurrency] = useState(userCurrency);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Phones show one tab at a time (bottom tab bar); md+ shows everything.
+  const [phoneTab, setPhoneTab] = useState<"home" | "money" | "debt">("home");
+  const [moneyTab, setMoneyTab] = useState<"income" | "expense" | "purchase" | "circulation">("purchase");
+  // Full class names on purpose: Tailwind only generates classes it finds
+  // written out in the source, so `md:${display}` would never be built.
+  const PHONE_HIDDEN = { block: "hidden md:block", grid: "hidden md:grid", flex: "hidden md:flex" } as const;
+  const phoneShow = (visible: boolean, display: keyof typeof PHONE_HIDDEN = "block") =>
+    visible ? "" : PHONE_HIDDEN[display];
+  const goTab = (t: typeof phoneTab) => {
+    setPhoneTab(t);
+    window.scrollTo({ top: 0 });
+  };
   const fmt = useMemo(() => makeFmt(currency), [currency]);
 
   const [balanceAdjustment, setBalanceAdjustment] = useState(userBalanceAdjustment);
@@ -202,6 +214,18 @@ export default function Dashboard({
     const r = await fetch("/api/entries");
     if (!r.ok) return reportError(r, "Failed to refresh — your last change may not be reflected yet");
     setEntries(await r.json());
+  }
+
+  // Balance card's refresh button: pull the latest from every connected bank.
+  const [syncing, setSyncing] = useState(false);
+  async function syncBanks() {
+    setSyncing(true);
+    await Promise.all([
+      fetch("/api/simplefin/sync", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }),
+      fetch("/api/plaid/sync", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }),
+    ]).catch(() => null);
+    await refreshBankAndEntries();
+    setSyncing(false);
   }
 
   // After a bank sync/connect/unlink: entries and the real balance both change.
@@ -570,7 +594,7 @@ export default function Dashboard({
 
   return (
     <CurrencyContext.Provider value={fmt}>
-    <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+    <main className="max-w-7xl mx-auto px-4 sm:px-6 pt-[max(1rem,env(safe-area-inset-top))] md:pt-6 pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:pb-6 space-y-4 md:space-y-6">
       {isOffline && (
         <div
           role="status"
@@ -594,19 +618,19 @@ export default function Dashboard({
           </button>
         </div>
       )}
-      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
+      <header className="flex items-center justify-between gap-3">
+        <div className="hidden md:block">
           <h1 className="text-2xl sm:text-3xl font-bold">
             Hello, <span className="text-red-400">{userName || userEmail.split("@")[0]}</span>
           </h1>
           <p className="text-neutral-400 text-sm">Your money, tracked.</p>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1 bg-neutral-900/60 border border-neutral-800 rounded-xl px-1 py-1">
+        <div className="flex items-center gap-3 flex-1 md:flex-none">
+          <div className="flex flex-1 md:flex-none items-center justify-between gap-1 bg-neutral-900/60 border border-neutral-800 rounded-xl px-1 py-1">
             <button
               onClick={() => setSelectedMonth((m) => shiftMonth(m, -1))}
               disabled={selectedMonth <= startMonth}
-              className="px-2 py-1.5 rounded-lg text-sm text-neutral-300 hover:bg-neutral-800 disabled:opacity-30 disabled:hover:bg-transparent"
+              className="px-3 md:px-2 py-2 md:py-1.5 rounded-lg text-sm text-neutral-300 hover:bg-neutral-800 disabled:opacity-30 disabled:hover:bg-transparent"
               title="Previous month"
             >
               ‹
@@ -617,7 +641,7 @@ export default function Dashboard({
             <button
               onClick={() => setSelectedMonth((m) => shiftMonth(m, 1))}
               disabled={selectedMonth >= currentMonth}
-              className="px-2 py-1.5 rounded-lg text-sm text-neutral-300 hover:bg-neutral-800 disabled:opacity-30 disabled:hover:bg-transparent"
+              className="px-3 md:px-2 py-2 md:py-1.5 rounded-lg text-sm text-neutral-300 hover:bg-neutral-800 disabled:opacity-30 disabled:hover:bg-transparent"
               title="Next month"
             >
               ›
@@ -627,7 +651,7 @@ export default function Dashboard({
             onClick={() => setSettingsOpen(true)}
             title="Settings"
             aria-label="Settings"
-            className="p-2.5 rounded-xl border border-neutral-700 hover:bg-neutral-800 transition text-neutral-300 hover:text-white"
+            className="hidden md:block p-2.5 rounded-xl border border-neutral-700 hover:bg-neutral-800 transition text-neutral-300 hover:text-white"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="3" />
@@ -636,7 +660,7 @@ export default function Dashboard({
           </button>
           <button
             onClick={() => signOut({ callbackUrl: "/login" })}
-            className="px-4 py-2 rounded-xl border border-neutral-700 hover:bg-neutral-800 transition text-sm whitespace-nowrap"
+            className="hidden md:inline-flex px-4 py-2 rounded-xl border border-neutral-700 hover:bg-neutral-800 transition text-sm whitespace-nowrap"
           >
             Sign out
           </button>
@@ -644,7 +668,9 @@ export default function Dashboard({
       </header>
 
       {/* Summary cards */}
-      <section className={`grid grid-cols-2 gap-4 ${budgetItems.length ? "md:grid-cols-4" : "md:grid-cols-5"}`}>
+      <section
+        className={`grid grid-cols-2 gap-3 md:gap-4 ${budgetItems.length ? "md:grid-cols-4" : "md:grid-cols-5"} ${phoneShow(phoneTab === "home", "grid")}`}
+      >
         <StatCard
           label="Balance"
           value={fmt(balance)}
@@ -662,6 +688,7 @@ export default function Dashboard({
           }
           // The bank sets the balance when connected — nothing to adjust.
           onEdit={bank ? undefined : () => setAdjustBalanceOpen(true)}
+          action={bank ? { label: syncing ? "Syncing banks…" : "Sync banks now", busy: syncing, onClick: syncBanks } : undefined}
         />
         <StatCard
           label="Bills"
@@ -705,13 +732,14 @@ export default function Dashboard({
       </section>
 
       {monthRow && monthRow.expectedIncome > monthRow.receivedIncome && (
-        <p className="text-sm text-red-300 bg-red-400/10 border border-red-400/25 rounded-xl px-4 py-2.5">
+        <p className={`text-sm text-red-300 bg-red-400/10 border border-red-400/25 rounded-xl px-4 py-2.5 ${phoneShow(phoneTab === "home")}`}>
           {fmt(monthRow.expectedIncome - monthRow.receivedIncome)} income not received yet — mark it
           received in the Income table once it lands.
         </p>
       )}
 
       <BudgetSection
+        className={phoneShow(phoneTab === "home")}
         plan={budget}
         items={budgetItems}
         monthName={monthDisplay(selectedMonth)}
@@ -721,7 +749,7 @@ export default function Dashboard({
 
       {milestone && (
         <section
-          className={`rounded-2xl border p-4 flex items-center gap-4 ${
+          className={`rounded-2xl border p-4 flex items-center gap-4 ${phoneShow(phoneTab === "debt", "flex")} ${
             milestone.pct === 100
               ? "bg-red-500/15 border-red-500/40"
               : "bg-red-500/10 border-red-500/25"
@@ -741,9 +769,37 @@ export default function Dashboard({
         </section>
       )}
 
+      {/* Phones: one money list at a time. */}
+      {phoneTab === "money" && (
+        <div className="md:hidden grid grid-cols-4 gap-1 bg-neutral-900/80 border border-neutral-800 rounded-xl p-1 sticky top-[max(0.5rem,env(safe-area-inset-top))] z-30 backdrop-blur">
+          {(
+            [
+              ["income", "Income", totalIncome],
+              ["expense", "Bills", totalExpense],
+              ["purchase", "Spent", totalPurchases],
+              ["circulation", "Moves", netCirculation],
+            ] as const
+          ).map(([key, label, amount]) => (
+            <button
+              key={key}
+              onClick={() => setMoneyTab(key)}
+              className={`rounded-lg px-1 py-1.5 text-center transition ${
+                moneyTab === key ? "bg-red-500 text-neutral-950" : "text-neutral-300"
+              }`}
+            >
+              <span className="block text-xs font-semibold">{label}</span>
+              <span className={`block text-[11px] tabular-nums ${moneyTab === key ? "text-neutral-900" : "text-neutral-500"}`}>
+                {fmt(amount)}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Category tables */}
-      <section className="grid md:grid-cols-2 xl:grid-cols-3 gap-6">
+      <section className={`grid md:grid-cols-2 xl:grid-cols-3 gap-6 ${phoneShow(phoneTab !== "home", "grid")}`}>
         <CategoryTable
+          className={phoneShow(phoneTab === "money" && moneyTab === "income", "flex")}
           title="Income"
           color="red"
           rows={monthIncome}
@@ -757,6 +813,7 @@ export default function Dashboard({
           paidLabels={{ header: "Got it", yes: "✓ Received", no: "Mark received" }}
         />
         <CategoryTable
+          className={phoneShow(phoneTab === "money" && moneyTab === "expense", "flex")}
           title="Bills"
           color="rose"
           rows={monthExpenses}
@@ -769,6 +826,7 @@ export default function Dashboard({
           payBusy={payBusy}
         />
         <CategoryTable
+          className={phoneShow(phoneTab === "money" && moneyTab === "purchase", "flex")}
           title="Purchases"
           color="crimson"
           rows={purchases.filter((e) => monthKey(new Date(e.createdAt)) === selectedMonth)}
@@ -778,6 +836,7 @@ export default function Dashboard({
           onEdit={setEditEntry}
         />
         <CategoryTable
+          className={phoneShow(phoneTab === "money" && moneyTab === "circulation", "flex")}
           title="Circulation"
           color="neutral"
           rows={monthCirculation}
@@ -787,6 +846,7 @@ export default function Dashboard({
           onEdit={setEditEntry}
         />
         <CategoryTable
+          className={phoneShow(phoneTab === "debt", "flex")}
           title="Debt"
           color="maroon"
           rows={debts}
@@ -800,7 +860,7 @@ export default function Dashboard({
       </section>
 
       {/* Summary table */}
-      <section className="bg-neutral-900/60 border border-neutral-800 rounded-2xl overflow-hidden">
+      <section className={`bg-neutral-900/60 border border-neutral-800 rounded-2xl overflow-hidden ${phoneShow(phoneTab === "money")}`}>
         <button
           onClick={toggleSummary}
           className={`w-full px-5 py-3 flex items-center justify-between text-left ${summaryOpen ? "border-b border-neutral-800" : ""}`}
@@ -874,7 +934,7 @@ export default function Dashboard({
       </section>
 
       {/* Debt payment plan */}
-      <section className="bg-gradient-to-br from-rose-700/10 via-neutral-900 to-neutral-900 border border-rose-700/30 rounded-2xl p-5">
+      <section className={`bg-gradient-to-br from-rose-700/10 via-neutral-900 to-neutral-900 border border-rose-700/30 rounded-2xl p-4 md:p-5 ${phoneShow(phoneTab === "debt")}`}>
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div>
             <h2 className="text-xl font-bold flex items-center gap-2">
@@ -1104,6 +1164,8 @@ export default function Dashboard({
         )}
       </section>
 
+      <PhoneTabBar tab={phoneTab} onTab={goTab} onSettings={() => setSettingsOpen(true)} />
+
       {modalType && (
         <EntryModal
           type={modalType}
@@ -1181,6 +1243,7 @@ export default function Dashboard({
 /* ---------- subcomponents ---------- */
 
 function CategoryTable({
+  className = "",
   title,
   color,
   rows,
@@ -1196,6 +1259,7 @@ function CategoryTable({
   paidLabels,
   summary,
 }: {
+  className?: string;
   title: string;
   color: "red" | "rose" | "maroon" | "crimson" | "neutral";
   rows: Entry[];
@@ -1227,7 +1291,7 @@ function CategoryTable({
     neutral: { bar: "bg-neutral-500", text: "text-neutral-300", chip: "bg-neutral-500/15 border-neutral-500/30", btn: "bg-neutral-700 hover:bg-neutral-600 text-white" },
   }[color];
   return (
-    <div className="bg-neutral-900/60 border border-neutral-800 rounded-2xl overflow-hidden flex flex-col">
+    <div className={`bg-neutral-900/60 border border-neutral-800 rounded-2xl overflow-hidden flex flex-col ${className}`}>
       <div className={`h-1 ${map.bar}`} />
       <div className="px-5 py-3 flex items-center justify-between border-b border-neutral-800">
         <div>
@@ -1247,11 +1311,11 @@ function CategoryTable({
         <table className="w-full text-sm">
           <thead className="text-neutral-500 text-xs uppercase">
             <tr>
-              <th className="text-left px-4 py-2">Label</th>
-              <th className="text-right px-4 py-2">Amount</th>
-              {showShare && <th className="text-right px-4 py-2">Share</th>}
-              {onTogglePaid && <th className="text-center px-4 py-2">{marks.header}</th>}
-              <th className="px-4 py-2 w-8"></th>
+              <th className="text-left px-2.5 sm:px-4 py-2">Label</th>
+              <th className="text-right px-2.5 sm:px-4 py-2">Amount</th>
+              {showShare && <th className="text-right px-2.5 sm:px-4 py-2 hidden sm:table-cell">Share</th>}
+              {onTogglePaid && <th className="text-center px-2.5 sm:px-4 py-2">{marks.header}</th>}
+              <th className="px-2.5 sm:px-4 py-2 w-8"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-800">
@@ -1266,7 +1330,7 @@ function CategoryTable({
               const paid = !!selectedMonth && e.payments.some((p) => p.month === selectedMonth);
               return (
               <tr key={e.id} className={`hover:bg-neutral-800/40 ${paid ? "bg-red-500/5" : ""}`}>
-                <td className="px-4 py-2">
+                <td className="px-2.5 sm:px-4 py-2">
                   <p className="font-medium flex flex-wrap items-center gap-x-2 gap-y-0.5 break-words">
                     {e.label}
                     {e.type === "circulation" ? (
@@ -1343,16 +1407,16 @@ function CategoryTable({
                     </p>
                   )}
                 </td>
-                <td className={`px-4 py-2 text-right tabular-nums font-semibold ${map.text}`}>
+                <td className={`px-2.5 sm:px-4 py-2 text-right tabular-nums font-semibold ${map.text}`}>
                   {e.type === "circulation" ? `${e.sourceKind === "out" ? "−" : "+"}${fmt(e.amount)}` : fmt(e.amount)}
                 </td>
                 {showShare && (
-                  <td className="px-4 py-2 text-right text-neutral-400 tabular-nums">
+                  <td className="px-2.5 sm:px-4 py-2 text-right text-neutral-400 tabular-nums hidden sm:table-cell">
                     {total ? pct(e.amount / total) : "—"}
                   </td>
                 )}
                 {onTogglePaid && (
-                  <td className="px-4 py-2 text-center">
+                  <td className="px-2.5 sm:px-4 py-2 text-center">
                     {e.frequency === "monthly" ? (
                       <button
                         onClick={() => onTogglePaid(e.id, paid, e.label, e.amount)}
@@ -1374,14 +1438,14 @@ function CategoryTable({
                     )}
                   </td>
                 )}
-                <td className="px-4 py-2 text-right">
+                <td className="px-2.5 sm:px-4 py-2 text-right">
                   <div className="flex items-center justify-end gap-2">
                     {onLogPayment && (
                       <button
                         onClick={() => onLogPayment(e.id, e.label)}
-                        className="px-2 py-1 rounded-lg text-xs font-semibold bg-rose-700/15 border border-rose-700/30 text-rose-400 hover:bg-rose-700/25"
+                        className="px-2 py-1 rounded-lg text-xs font-semibold whitespace-nowrap bg-rose-700/15 border border-rose-700/30 text-rose-400 hover:bg-rose-700/25"
                       >
-                        + Payment
+                        + Pay<span className="hidden sm:inline">ment</span>
                       </button>
                     )}
                     <button
@@ -1420,6 +1484,55 @@ function CategoryTable({
   );
 }
 
+// Phone navigation, like a native banking app: one focused screen per tab
+// instead of one long page. Hidden from md up, where everything fits.
+function PhoneTabBar({
+  tab,
+  onTab,
+  onSettings,
+}: {
+  tab: "home" | "money" | "debt";
+  onTab: (t: "home" | "money" | "debt") => void;
+  onSettings: () => void;
+}) {
+  const icon = (d: string) => (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={d} />
+    </svg>
+  );
+  const items = [
+    { key: "home" as const, label: "Home", d: "M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" },
+    { key: "money" as const, label: "Money", d: "M4 7h16M4 12h16M4 17h10" },
+    { key: "debt" as const, label: "Debt", d: "M3 6h18v12H3zM3 10h18M7 15h4" },
+  ];
+  return (
+    <nav
+      aria-label="Sections"
+      className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-neutral-950/95 backdrop-blur border-t border-neutral-800 pb-[env(safe-area-inset-bottom)]"
+    >
+      <div className="grid grid-cols-4">
+        {items.map((it) => (
+          <button
+            key={it.key}
+            onClick={() => onTab(it.key)}
+            aria-current={tab === it.key ? "page" : undefined}
+            className={`flex flex-col items-center gap-0.5 pt-2 pb-2.5 text-[11px] font-medium ${
+              tab === it.key ? "text-red-400" : "text-neutral-500"
+            }`}
+          >
+            {icon(it.d)}
+            {it.label}
+          </button>
+        ))}
+        <button onClick={onSettings} className="flex flex-col items-center gap-0.5 pt-2 pb-2.5 text-[11px] font-medium text-neutral-500">
+          {icon("M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.8 1.2V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.8-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3.3 14H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.2-2.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 3.3V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.8 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 20.7 10H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z")}
+          Settings
+        </button>
+      </div>
+    </nav>
+  );
+}
+
 // Remembers whether a section is open on this device (a display preference,
 // so localStorage is fine; it's optional and falls back to the default).
 function usePersistentToggle(key: string, initial: boolean) {
@@ -1448,12 +1561,14 @@ const nextDueLabel = (dueDay: number) => {
 };
 
 function BudgetSection({
+  className = "",
   plan,
   items,
   monthName,
   debtSharePct,
   onSaved,
 }: {
+  className?: string;
   plan: BudgetPlan;
   items: BudgetItem[];
   monthName: string;
@@ -1514,8 +1629,8 @@ function BudgetSection({
   };
 
   return (
-    <section className="bg-neutral-900/60 border border-neutral-800 rounded-2xl">
-      <button onClick={toggle} className="w-full px-5 py-4 flex items-center justify-between gap-3 text-left">
+    <section className={`bg-neutral-900/60 border border-neutral-800 rounded-2xl ${className}`}>
+      <button onClick={toggle} className="w-full px-4 md:px-5 py-3 md:py-4 flex items-center justify-between gap-3 text-left">
         <div>
           <h2 className="text-lg font-bold flex items-center gap-2">
             <span className={`text-neutral-500 transition-transform ${open ? "rotate-90" : ""}`}>›</span>
@@ -1724,12 +1839,14 @@ function StatCard({
   accent,
   sub,
   onEdit,
+  action,
 }: {
   label: string;
   value: string;
   accent: "red" | "rose" | "maroon" | "highlight" | "crimson";
   sub?: string;
   onEdit?: () => void;
+  action?: { label: string; busy?: boolean; onClick: () => void };
 }) {
   const colors: Record<string, string> = {
     red: "from-red-500/20 to-red-500/0 border-red-500/30",
@@ -1739,9 +1856,33 @@ function StatCard({
     crimson: "from-red-600/20 to-red-600/0 border-red-600/30",
   };
   return (
-    <div className={`relative bg-gradient-to-br ${colors[accent]} border rounded-2xl p-4`}>
+    <div className={`relative bg-gradient-to-br ${colors[accent]} border rounded-2xl p-3 md:p-4`}>
       <div className="flex items-start justify-between gap-2">
         <p className="text-xs uppercase tracking-wider opacity-80">{label}</p>
+        {action && (
+          <button
+            onClick={action.onClick}
+            disabled={action.busy}
+            title={action.label}
+            aria-label={action.label}
+            className="text-neutral-400 hover:text-white -mt-1.5 -mr-1.5 p-1.5 disabled:opacity-60"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className={action.busy ? "animate-spin" : ""}
+              aria-hidden="true"
+            >
+              <path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5" />
+            </svg>
+          </button>
+        )}
         {onEdit && (
           <button
             onClick={onEdit}
@@ -1753,7 +1894,7 @@ function StatCard({
           </button>
         )}
       </div>
-      <p className="text-lg sm:text-2xl font-bold mt-2 tabular-nums text-white">{value}</p>
+      <p className="text-lg sm:text-2xl font-bold mt-1 md:mt-2 tabular-nums text-white">{value}</p>
       {sub && <p className="text-xs text-neutral-400 mt-1">{sub}</p>}
     </div>
   );
@@ -1951,7 +2092,7 @@ function EntryModal({
 
   return (
     <div
-      className="fixed inset-0 bg-black/60 backdrop-blur-sm grid place-items-center z-50 p-4"
+      className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 sm:p-4"
       onClick={onClose}
     >
       <div
@@ -1959,7 +2100,7 @@ function EntryModal({
         role="dialog"
         aria-modal="true"
         aria-label={titles[type]}
-        className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 w-full max-w-md shadow-2xl"
+        className="bg-neutral-900 border border-neutral-800 rounded-t-2xl sm:rounded-2xl pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:pb-6 px-6 pt-6 w-full max-w-md shadow-2xl max-h-[90dvh] overflow-y-auto"
       >
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-bold capitalize">{titles[type]}</h2>
@@ -2125,13 +2266,13 @@ function EditEntryModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm grid place-items-center z-50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 sm:p-4" onClick={onClose}>
       <div
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label={`Edit ${entry.label}`}
-        className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 w-full max-w-md shadow-2xl"
+        className="bg-neutral-900 border border-neutral-800 rounded-t-2xl sm:rounded-2xl pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:pb-6 px-6 pt-6 w-full max-w-md shadow-2xl max-h-[90dvh] overflow-y-auto"
       >
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-bold">Edit {entry.type === "debt" ? "debt" : entry.type}</h2>
@@ -2234,13 +2375,13 @@ function AdjustBalanceModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm grid place-items-center z-50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 sm:p-4" onClick={onClose}>
       <div
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label="Adjust balance"
-        className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 w-full max-w-md shadow-2xl"
+        className="bg-neutral-900 border border-neutral-800 rounded-t-2xl sm:rounded-2xl pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:pb-6 px-6 pt-6 w-full max-w-md shadow-2xl max-h-[90dvh] overflow-y-auto"
       >
         <div className="flex items-center justify-between mb-1">
           <h2 className="text-xl font-bold">Adjust balance</h2>
@@ -2284,6 +2425,7 @@ function SettingsModal({
 }) {
   useEscapeClose(onClose);
   const [tab, setTab] = useState<"currency" | "bank" | "password">("currency");
+
   const [picked, setPicked] = useState(currency);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
@@ -2347,18 +2489,27 @@ function SettingsModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm grid place-items-center z-50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 sm:p-4" onClick={onClose}>
       <div
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
-        className="bg-neutral-900 border border-neutral-800 rounded-2xl w-full max-w-md shadow-2xl flex flex-col max-h-[85vh]"
+        className="bg-neutral-900 border border-neutral-800 rounded-t-2xl sm:rounded-2xl w-full max-w-md shadow-2xl flex flex-col max-h-[90dvh] pb-[env(safe-area-inset-bottom)] sm:pb-0"
       >
         <div className="p-6 pb-3 shrink-0">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-xl font-bold">Settings</h2>
-            <button onClick={onClose} aria-label="Close" className="text-neutral-500 hover:text-white text-lg leading-none p-1">✕</button>
+            <div className="flex items-center gap-2">
+              {/* Phones have no header Sign out button; it lives here instead. */}
+              <button
+                onClick={() => signOut({ callbackUrl: "/login" })}
+                className="md:hidden px-3 py-1.5 rounded-lg border border-neutral-700 text-sm text-neutral-300"
+              >
+                Sign out
+              </button>
+              <button onClick={onClose} aria-label="Close" className="text-neutral-500 hover:text-white text-lg leading-none p-2 -m-1">✕</button>
+            </div>
           </div>
           <div className="flex bg-neutral-800 border border-neutral-700 rounded-xl p-1">
             <button
@@ -2395,7 +2546,7 @@ function SettingsModal({
                 Everything is displayed in {currencySymbol(picked)} {picked}.
               </p>
               <input
-                autoFocus
+                autoFocus={typeof window !== "undefined" && window.matchMedia("(min-width: 768px)").matches}
                 placeholder="Search currency (e.g. euro, CAD)"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -2941,13 +3092,13 @@ function PaySourceModal({
   const [pickingDebt, setPickingDebt] = useState(false);
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm grid place-items-center z-50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 sm:p-4" onClick={onClose}>
       <div
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label={pickingDebt ? "Which card or loan?" : `Mark "${label}" as paid`}
-        className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 w-full max-w-md shadow-2xl max-h-[85vh] overflow-y-auto"
+        className="bg-neutral-900 border border-neutral-800 rounded-t-2xl sm:rounded-2xl pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:pb-6 px-6 pt-6 w-full max-w-md shadow-2xl max-h-[90dvh] overflow-y-auto"
       >
         <div className="flex items-center justify-between mb-1">
           <h2 className="text-xl font-bold">
@@ -3056,13 +3207,13 @@ function DebtPaymentModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm grid place-items-center z-50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 sm:p-4" onClick={onClose}>
       <div
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label={`Payments — ${label}`}
-        className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 w-full max-w-md shadow-2xl max-h-[85vh] overflow-y-auto"
+        className="bg-neutral-900 border border-neutral-800 rounded-t-2xl sm:rounded-2xl pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:pb-6 px-6 pt-6 w-full max-w-md shadow-2xl max-h-[90dvh] overflow-y-auto"
       >
         <div className="flex items-center justify-between mb-1">
           <h2 className="text-xl font-bold">Payments — {label}</h2>
