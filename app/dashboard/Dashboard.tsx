@@ -23,6 +23,8 @@ import {
   simulatePayoff,
   monthLabel,
   buildSuggestions,
+  anchorLedger,
+  type BankBalance,
 } from "./lib";
 
 // Provided by Dashboard so every subcomponent formats in the signed-in user's
@@ -46,18 +48,22 @@ export default function Dashboard({
   userName,
   userCurrency,
   userBalanceAdjustment,
+  initialBank,
 }: {
   initialEntries: Entry[];
   userEmail: string;
   userName: string | null;
   userCurrency: string;
   userBalanceAdjustment: number;
+  initialBank: BankBalance | null;
 }) {
   const [currency, setCurrency] = useState(userCurrency);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const fmt = useMemo(() => makeFmt(currency), [currency]);
 
   const [balanceAdjustment, setBalanceAdjustment] = useState(userBalanceAdjustment);
+  // Connected chequing/savings total. When present, it *is* the balance.
+  const [bank, setBank] = useState<BankBalance | null>(initialBank);
   const [adjustBalanceOpen, setAdjustBalanceOpen] = useState(false);
 
   // The iOS build is a thin webview over the deployed site with no offline
@@ -173,6 +179,12 @@ export default function Dashboard({
     setEntries(await r.json());
   }
 
+  // After a bank sync/connect/unlink: entries and the real balance both change.
+  async function refreshBankAndEntries() {
+    const [, r] = await Promise.all([refreshEntries(), fetch("/api/bank/balance")]);
+    if (r.ok) setBank(await r.json());
+  }
+
   function togglePaid(entryId: string, paid: boolean, label: string, amount: number) {
     if (paid) unmarkPaid(entryId);
     else setPayPrompt({ id: entryId, label, amount });
@@ -221,6 +233,9 @@ export default function Dashboard({
   const income = useMemo(() => entries.filter((e) => e.type === "income"), [entries]);
   const expenses = useMemo(() => entries.filter((e) => e.type === "expense"), [entries]);
   const purchases = useMemo(() => entries.filter((e) => e.type === "purchase"), [entries]);
+  // Money moving in/out that's neither earned nor spent (e-transfers,
+  // refunds, card payments). sourceKind holds the direction: "in" | "out".
+  const circulation = useMemo(() => entries.filter((e) => e.type === "circulation"), [entries]);
   // What actually applies to the selected month, so the category tables list
   // the same entries their header totals are summed from.
   const monthIncome = useMemo(
@@ -264,8 +279,10 @@ export default function Dashboard({
     const months: string[] = [];
     for (let m = startMonth; m <= currentMonth; m = shiftMonth(m, 1)) months.push(m);
 
-    let carry = balanceAdjustment;
-    return months.map((month) => {
+    // With banks connected the starting point doesn't matter — the rows are
+    // anchored to the real balance below — so start from zero.
+    let carry = bank ? 0 : balanceAdjustment;
+    const rows = months.map((month) => {
       const inc = income.filter((e) => activeIn(e, month));
       const exp = expenses.filter((e) => activeIn(e, month));
       const gotPaid = (e: Entry) => e.payments.some((p) => p.month === month);
@@ -297,11 +314,16 @@ export default function Dashboard({
       );
       const purchaseTotal = sumBy(monthPurchases);
 
+      const monthCirculation = circulation.filter((e) => bornIn(e) === month);
+      const circulationIn = sumBy(monthCirculation, (e) => e.sourceKind === "in");
+      const circulationOut = sumBy(monthCirculation, (e) => e.sourceKind === "out");
+
       // Balance and Debt are tracked independently — a debt payment changes
       // what you owe (see the Debt card/table) but never touches this
       // month's cash balance, even when it's flagged "from balance".
       const carryIn = carry;
-      const closing = carryIn + receivedIncome - spentFromBalance - purchaseSpend;
+      const closing =
+        carryIn + receivedIncome + circulationIn - circulationOut - spentFromBalance - purchaseSpend;
       carry = closing;
       return {
         month,
@@ -314,12 +336,15 @@ export default function Dashboard({
         spentFromBalance,
         purchaseSpend,
         purchaseTotal,
+        circulationIn,
+        circulationOut,
         closing,
         // What's genuinely free once this month's remaining bills are covered.
         available: closing - billsUnpaid,
       };
     });
-  }, [income, expenses, purchases, startMonth, currentMonth, balanceAdjustment]);
+    return bank ? anchorLedger(rows, currentMonth, bank.balance) : rows;
+  }, [income, expenses, purchases, circulation, startMonth, currentMonth, balanceAdjustment, bank]);
 
   const monthRow = useMemo(
     () => ledger.find((r) => r.month === selectedMonth) ?? ledger[ledger.length - 1],
@@ -331,6 +356,11 @@ export default function Dashboard({
   const totalIncome = monthRow?.receivedIncome ?? 0;
   const totalExpense = monthRow?.billsDue ?? 0;
   const totalPurchases = monthRow?.purchaseTotal ?? 0;
+  const netCirculation = (monthRow?.circulationIn ?? 0) - (monthRow?.circulationOut ?? 0);
+  const monthCirculation = useMemo(
+    () => circulation.filter((e) => bornIn(e) === selectedMonth),
+    [circulation, selectedMonth]
+  );
   // DTI reflects income capacity, not whether this month's paycheck has
   // been ticked "received" yet, so it's keyed off expected income.
   const dti = expectedIncome > 0 ? totalDebt / (expectedIncome * 12) : 0;
@@ -549,11 +579,18 @@ export default function Dashboard({
           value={fmt(balance)}
           accent={balance >= 0 ? "red" : "rose"}
           sub={
-            monthRow && monthRow.carryIn !== 0
+            bank
+              ? selectedMonth === currentMonth
+                ? `In your ${bank.accounts === 1 ? "account" : `${bank.accounts} accounts`}${
+                    bank.asOf ? ` · synced ${new Date(bank.asOf).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""
+                  }`
+                : "End of month, from your bank"
+              : monthRow && monthRow.carryIn !== 0
               ? `${fmt(monthRow.carryIn)} carried in`
               : "Left at end of this month"
           }
-          onEdit={() => setAdjustBalanceOpen(true)}
+          // The bank sets the balance when connected — nothing to adjust.
+          onEdit={bank ? undefined : () => setAdjustBalanceOpen(true)}
         />
         <StatCard
           label="Bills"
@@ -622,7 +659,7 @@ export default function Dashboard({
       )}
 
       {/* Category tables */}
-      <section className="grid md:grid-cols-2 xl:grid-cols-4 gap-6">
+      <section className="grid md:grid-cols-2 xl:grid-cols-3 gap-6">
         <CategoryTable
           title="Income"
           color="red"
@@ -654,6 +691,15 @@ export default function Dashboard({
           rows={purchases.filter((e) => monthKey(new Date(e.createdAt)) === selectedMonth)}
           total={totalPurchases}
           onAdd={() => setModalType("purchase")}
+          onDelete={deleteEntry}
+          onEdit={setEditEntry}
+        />
+        <CategoryTable
+          title="Circulation"
+          color="neutral"
+          rows={monthCirculation}
+          total={netCirculation}
+          summary={`In ${fmt(monthRow?.circulationIn ?? 0)} · Out ${fmt(monthRow?.circulationOut ?? 0)}`}
           onDelete={deleteEntry}
           onEdit={setEditEntry}
         />
@@ -703,6 +749,13 @@ export default function Dashboard({
               color="crimson"
             />
             <SumRow
+              label="Circulation"
+              count={monthCirculation.length}
+              total={netCirculation}
+              color="neutral"
+              note="E-transfers, refunds, card payments — not income or spending"
+            />
+            <SumRow
               label="Debt"
               count={debts.length}
               total={-totalDebt}
@@ -720,7 +773,9 @@ export default function Dashboard({
                 {totalIncome ? pct(balance / totalIncome) : "—"}
               </td>
               <td className="px-5 py-3 hidden md:table-cell text-neutral-500">
-                Income − Bills − Purchases (debt is tracked separately, not netted in)
+                {bank
+                  ? "Your connected accounts' balance"
+                  : "Income − Bills − Purchases ± Circulation (debt is tracked separately, not netted in)"}
               </td>
             </tr>
           </tbody>
@@ -963,14 +1018,12 @@ export default function Dashboard({
       {settingsOpen && (
         <SettingsModal
           currency={currency}
-          currentBalance={balance}
           onClose={() => setSettingsOpen(false)}
           onSaved={(code) => {
             setCurrency(code);
             setSettingsOpen(false);
           }}
-          onBanksChanged={refreshEntries}
-          onApplyBalance={adjustBalanceTo}
+          onBanksChanged={refreshBankAndEntries}
         />
       )}
 
@@ -1042,12 +1095,16 @@ function CategoryTable({
   payBusy,
   onLogPayment,
   paidLabels,
+  summary,
 }: {
   title: string;
-  color: "red" | "rose" | "maroon" | "crimson";
+  color: "red" | "rose" | "maroon" | "crimson" | "neutral";
   rows: Entry[];
   total: number;
-  onAdd: () => void;
+  // Omitted for sections filled only by bank sync (Circulation).
+  onAdd?: () => void;
+  // Extra line under the total, e.g. Circulation's in/out split.
+  summary?: string;
   onDelete: (id: string) => void;
   onEdit: (entry: Entry) => void;
   showShare?: boolean;
@@ -1064,6 +1121,7 @@ function CategoryTable({
     rose: { bar: "bg-rose-500", text: "text-rose-400", chip: "bg-rose-500/15 border-rose-500/30", btn: "bg-gradient-to-b from-rose-500 to-rose-600 hover:to-rose-500 text-white shadow-md shadow-rose-950/40" },
     maroon: { bar: "bg-rose-700", text: "text-rose-600", chip: "bg-rose-700/15 border-rose-700/30", btn: "bg-gradient-to-b from-rose-700 to-rose-800 hover:to-rose-700 text-neutral-950 shadow-md shadow-rose-950/40" },
     crimson: { bar: "bg-red-600", text: "text-red-500", chip: "bg-red-600/15 border-red-600/30", btn: "bg-gradient-to-b from-red-600 to-red-700 hover:to-red-600 text-white shadow-md shadow-red-950/40" },
+    neutral: { bar: "bg-neutral-500", text: "text-neutral-300", chip: "bg-neutral-500/15 border-neutral-500/30", btn: "bg-neutral-700 hover:bg-neutral-600 text-white" },
   }[color];
   return (
     <div className="bg-neutral-900/60 border border-neutral-800 rounded-2xl overflow-hidden flex flex-col">
@@ -1072,10 +1130,15 @@ function CategoryTable({
         <div>
           <h3 className="text-lg font-bold">{title}</h3>
           <p className={`text-sm tabular-nums ${map.text} font-semibold`}>{fmt(total)}</p>
+          {summary && <p className="text-xs text-neutral-500 tabular-nums">{summary}</p>}
         </div>
-        <button onClick={onAdd} className={`px-3 py-1.5 rounded-lg text-sm font-semibold ${map.btn}`}>
-          + Add
-        </button>
+        {onAdd ? (
+          <button onClick={onAdd} className={`px-3 py-1.5 rounded-lg text-sm font-semibold ${map.btn}`}>
+            + Add
+          </button>
+        ) : (
+          <span className="text-xs text-neutral-500">From your bank</span>
+        )}
       </div>
       <div className="overflow-x-auto flex-1">
         <table className="w-full text-sm">
@@ -1092,7 +1155,7 @@ function CategoryTable({
             {rows.length === 0 && (
               <tr>
                 <td colSpan={(showShare ? 4 : 3) + (onTogglePaid ? 1 : 0)} className="text-center py-8 text-neutral-500 italic">
-                  Empty — click + Add
+                  {onAdd ? "Empty — click + Add" : "Nothing this month"}
                 </td>
               </tr>
             )}
@@ -1101,9 +1164,18 @@ function CategoryTable({
               return (
               <tr key={e.id} className={`hover:bg-neutral-800/40 ${paid ? "bg-red-500/5" : ""}`}>
                 <td className="px-4 py-2.5">
-                  <p className="font-medium truncate flex items-center gap-2">
+                  <p className="font-medium flex flex-wrap items-center gap-x-2 gap-y-0.5 break-words">
                     {e.label}
-                    {e.type === "purchase" ? (
+                    {e.type === "circulation" ? (
+                      <>
+                        <span className="text-[10px] uppercase tracking-wider text-neutral-500">
+                          {new Date(e.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                        </span>
+                        <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-neutral-700/50 text-neutral-400 border border-neutral-600/40">
+                          {e.sourceKind === "out" ? "Out" : "In"}
+                        </span>
+                      </>
+                    ) : e.type === "purchase" ? (
                       <>
                         <span className="text-[10px] uppercase tracking-wider text-neutral-500">
                           {new Date(e.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
@@ -1158,16 +1230,16 @@ function CategoryTable({
                       </span>
                     )}
                   </p>
-                  {e.note && <p className="text-xs text-neutral-500 truncate">{e.note}</p>}
+                  {e.note && <p className="text-xs text-neutral-500 break-words">{e.note}</p>}
                   {onLogPayment && (!!e.paidSoFar || !!e.chargedSoFar) && (
-                    <p className="text-xs text-neutral-500 truncate">
+                    <p className="text-xs text-neutral-500 break-words">
                       {fmt(e.paidSoFar ?? 0)} paid
                       {e.chargedSoFar ? ` · ${fmt(e.chargedSoFar)} used` : ""} · started {fmt(e.originalAmount ?? e.amount)}
                     </p>
                   )}
                 </td>
                 <td className={`px-4 py-2.5 text-right tabular-nums font-semibold ${map.text}`}>
-                  {fmt(e.amount)}
+                  {e.type === "circulation" ? `${e.sourceKind === "out" ? "−" : "+"}${fmt(e.amount)}` : fmt(e.amount)}
                 </td>
                 {showShare && (
                   <td className="px-4 py-2.5 text-right text-neutral-400 tabular-nums">
@@ -1297,8 +1369,8 @@ function SumRow({
   label: string;
   count: number;
   total: number;
-  pctOfIncome: number;
-  color: "red" | "rose" | "maroon" | "crimson";
+  pctOfIncome?: number;
+  color: "red" | "rose" | "maroon" | "crimson" | "neutral";
   note?: string;
 }) {
   const fmt = useContext(CurrencyContext);
@@ -1307,13 +1379,16 @@ function SumRow({
     rose: "text-rose-400",
     maroon: "text-rose-600",
     crimson: "text-red-500",
+    neutral: "text-neutral-300",
   };
   return (
     <tr className="hover:bg-neutral-800/30">
       <td className="px-5 py-3 font-medium">{label}</td>
       <td className="px-5 py-3 text-right text-neutral-400">{count}</td>
       <td className={`px-5 py-3 text-right tabular-nums font-semibold ${map[color]}`}>{fmt(total)}</td>
-      <td className="px-5 py-3 text-right hidden sm:table-cell text-neutral-400">{pct(pctOfIncome)}</td>
+      <td className="px-5 py-3 text-right hidden sm:table-cell text-neutral-400">
+        {pctOfIncome == null ? "—" : pct(pctOfIncome)}
+      </td>
       <td className="px-5 py-3 hidden md:table-cell text-neutral-500">{note ?? ""}</td>
     </tr>
   );
@@ -1787,18 +1862,14 @@ function AdjustBalanceModal({
 
 function SettingsModal({
   currency,
-  currentBalance,
   onClose,
   onSaved,
   onBanksChanged,
-  onApplyBalance,
 }: {
   currency: string;
-  currentBalance: number;
   onClose: () => void;
   onSaved: (code: string) => void;
   onBanksChanged: () => void;
-  onApplyBalance: (newBalance: number) => void;
 }) {
   useEscapeClose(onClose);
   const [tab, setTab] = useState<"currency" | "bank" | "password">("currency");
@@ -1955,7 +2026,7 @@ function SettingsModal({
             </div>
           </>
         ) : tab === "bank" ? (
-          <BankTab currentBalance={currentBalance} onChanged={onBanksChanged} onApplyBalance={onApplyBalance} />
+          <BankTab onChanged={onBanksChanged} />
         ) : (
           <form onSubmit={changePassword} className="p-6 pt-3 space-y-3 overflow-y-auto">
             <input
@@ -2019,11 +2090,6 @@ type PlaidItemRow = {
   accounts: PlaidAccountRow[];
 };
 
-// The "Bank" settings tab: connect any number of banks via Plaid Link, see
-// what's linked, sync on demand, and unlink. Debt/credit accounts sync fully
-// automatically (see lib/plaid-sync.ts); the checking/savings total is
-// surfaced here rather than applied silently, since blindly overwriting the
-// tracked balance could clash with edits already made for past months.
 type SimplefinAccountRow = {
   id: string;
   orgName: string | null;
@@ -2042,15 +2108,10 @@ type SimplefinConnRow = {
   accounts: SimplefinAccountRow[];
 };
 
-function BankTab({
-  currentBalance,
-  onChanged,
-  onApplyBalance,
-}: {
-  currentBalance: number;
-  onChanged: () => void;
-  onApplyBalance: (newBalance: number) => void;
-}) {
+// The "Bank" settings tab: connect any number of banks (Plaid or SimpleFIN),
+// see what's linked, sync on demand, and unlink. Connected chequing/savings
+// accounts become the dashboard's Balance; cards and loans sync into debts.
+function BankTab({ onChanged }: { onChanged: () => void }) {
   const fmt = useContext(CurrencyContext);
   const [items, setItems] = useState<PlaidItemRow[] | null>(null);
   const [linkToken, setLinkToken] = useState<string | null>(null);
@@ -2146,7 +2207,7 @@ function BankTab({
   async function reimport() {
     if (
       !confirm(
-        "Re-import bank transactions?\n\nThis deletes every purchase and income imported from your banks and imports them again, each dated when it happened. Edits you made to imported entries are lost, and imported entries you deleted come back. Your debts aren't affected."
+        "Re-import bank transactions?\n\nThis deletes every purchase and income imported from your banks and imports them again from the banks still connected, each dated when it happened. Edits you made to imported entries are lost, and imported entries you deleted come back. Your debts aren't affected."
       )
     )
       return;
@@ -2159,7 +2220,7 @@ function BankTab({
     if (!r.ok) return setError(body?.error ?? "Re-import failed");
     const parts = [
       `Removed ${body.removed}`,
-      `re-imported ${body.purchases} purchase${body.purchases === 1 ? "" : "s"} and ${body.incomes} deposit${body.incomes === 1 ? "" : "s"}`,
+      `re-imported ${body.incomes} income, ${body.purchases} purchase${body.purchases === 1 ? "" : "s"} and ${body.circulation} circulation`,
     ];
     if (body.transfers) parts.push(`skipped ${body.transfers} transfer${body.transfers === 1 ? "" : "s"} between your accounts`);
     setReimportNotice(
@@ -2194,14 +2255,7 @@ function BankTab({
           <p className="text-sm text-neutral-400">
             Chequing/savings balance from your banks: <span className="text-white font-semibold">{fmt(depositoryTotal)}</span>
           </p>
-          {Math.abs(depositoryTotal - currentBalance) > 0.005 && (
-            <button
-              onClick={() => onApplyBalance(depositoryTotal)}
-              className="text-sm px-3 py-1.5 rounded-lg bg-red-500/15 border border-red-500/50 text-red-300 hover:bg-red-500/25"
-            >
-              Use as my tracked balance ({fmt(currentBalance)} → {fmt(depositoryTotal)})
-            </button>
-          )}
+          <p className="text-xs text-neutral-500">This is your Balance on the dashboard.</p>
         </div>
       )}
 
@@ -2268,12 +2322,14 @@ function BankTab({
         onError={setError}
       />
 
-      {((items?.length ?? 0) > 0 || (sfConns?.length ?? 0) > 0) && (
+      {/* Always shown: purchases imported by a since-removed connection still
+          need cleaning up even when no bank is connected now. */}
+      {items !== null && sfConns !== null && (
         <div className="border-t border-neutral-800 pt-4 space-y-2">
           <p className="text-xs text-neutral-500">
-            Spending imports as purchases and deposits (pay, e-transfers) as income, each in the month it
-            happened. Transfers between your own accounts are skipped. If you also log your pay by hand,
-            remove that entry so it isn't counted twice.
+            Pay and deposits import as Income, spending as Purchases, and e-transfers, refunds and card
+            payments as Circulation — each in the month it happened. Transfers between your own accounts
+            are skipped. If you also log your pay by hand, remove that entry so it isn't counted twice.
           </p>
           {reimportNotice && <p className="text-sm text-neutral-300">{reimportNotice}</p>}
           <button

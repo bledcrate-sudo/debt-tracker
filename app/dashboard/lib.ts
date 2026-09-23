@@ -297,3 +297,27 @@ export function buildSuggestions(ctx: {
 
   return out;
 }
+
+// Live total of connected chequing/savings accounts (see lib/bank-balance.ts).
+export type BankBalance = { balance: number; asOf: string | null; accounts: number };
+
+// With banks connected, Balance must be the real money in the accounts, not
+// a figure computed from entries. The ledger still computes each month's
+// flows from entries; this shifts every month by one offset so the current
+// month closes exactly at the bank balance. Past months then read as that
+// real balance worked backwards through the recorded flows.
+export function anchorLedger<T extends { month: string; carryIn: number; closing: number; available: number }>(
+  rows: T[],
+  month: string,
+  actual: number
+): T[] {
+  const row = rows.find((r) => r.month === month) ?? rows[rows.length - 1];
+  if (!row) return rows;
+  const offset = actual - row.closing;
+  return rows.map((r) => ({
+    ...r,
+    carryIn: r.carryIn + offset,
+    closing: r.closing + offset,
+    available: r.available + offset,
+  }));
+}

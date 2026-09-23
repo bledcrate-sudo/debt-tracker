@@ -6,6 +6,7 @@ import {
   activeIn,
   simulatePayoff,
   buildSuggestions,
+  anchorLedger,
   type SimDebt,
   type Entry,
 } from "./lib";
@@ -160,5 +161,21 @@ describe("buildSuggestions", () => {
   it("flags a high debt-to-income ratio as bad", () => {
     const out = buildSuggestions({ ...base, dti: 0.5 });
     expect(out.some((s) => s.tone === "bad" && /debt-to-income/i.test(s.title))).toBe(true);
+  });
+});
+
+describe("anchorLedger", () => {
+  const rows = [
+    { month: "2026-08", carryIn: 0, closing: 100, available: 100 },
+    { month: "2026-09", carryIn: 100, closing: 250, available: 200 },
+  ];
+  it("makes the current month close at the real bank balance", () => {
+    const out = anchorLedger(rows, "2026-09", 1750);
+    expect(out[1]).toMatchObject({ carryIn: 1600, closing: 1750, available: 1700 });
+  });
+  it("works earlier months backwards by the same offset", () => {
+    const out = anchorLedger(rows, "2026-09", 1750);
+    expect(out[0]).toMatchObject({ carryIn: 1500, closing: 1600 });
+    expect(out[0].closing).toBe(out[1].carryIn);
   });
 });

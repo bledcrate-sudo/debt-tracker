@@ -150,6 +150,7 @@ export type SimplefinSyncSummary = {
   debtsUpdated: number;
   transactionsImported: number;
   incomesImported: number;
+  circulationImported: number;
   transfersSkipped: number;
   cashBalance: number | null;
   warnings: string[];
@@ -184,6 +185,7 @@ export async function syncSimplefinConnection(
     debtsUpdated: 0,
     transactionsImported: 0,
     incomesImported: 0,
+    circulationImported: 0,
     transfersSkipped: 0,
     cashBalance: null,
     warnings: [],
@@ -316,6 +318,7 @@ export async function syncSimplefinConnection(
   });
   summary.transactionsImported = imported.purchases;
   summary.incomesImported = imported.incomes;
+  summary.circulationImported = imported.circulation;
   summary.transfersSkipped = imported.transfers;
 
   if (sawCash) summary.cashBalance = roundCents(cashSum);

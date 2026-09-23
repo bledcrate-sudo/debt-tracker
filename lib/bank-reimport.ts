@@ -1,9 +1,9 @@
 import { prisma } from "./prisma";
-import { IMPORT_NOTE } from "./bank-import";
+import { IMPORT_NOTE, IMPORTED_TYPES } from "./bank-import";
 import { syncSimplefinConnection } from "./simplefin";
 import { syncPlaidItem } from "./plaid-sync";
 
-// "Fix imported transactions": deletes every purchase/income the bank
+// "Fix imported transactions": deletes every entry the bank
 // importers created and re-imports them, e.g. to re-date ones imported
 // before transactions were back-dated to when they happened. Debts, their
 // payment history, and account settings are untouched. If the re-import
@@ -13,7 +13,7 @@ import { syncPlaidItem } from "./plaid-sync";
 export async function reimportBankTransactions(userId: string, opts: { fetchImpl?: typeof fetch } = {}) {
   const [removed] = await prisma.$transaction([
     prisma.entry.deleteMany({
-      where: { userId, note: IMPORT_NOTE, type: { in: ["purchase", "income"] } },
+      where: { userId, note: IMPORT_NOTE, type: { in: IMPORTED_TYPES } },
     }),
     prisma.simplefinTransaction.deleteMany({ where: { connection: { userId } } }),
     prisma.plaidTransaction.deleteMany({ where: { plaidItem: { userId } } }),
@@ -23,7 +23,7 @@ export async function reimportBankTransactions(userId: string, opts: { fetchImpl
     prisma.plaidItem.updateMany({ where: { userId }, data: { cursor: null } }),
   ]);
 
-  const result = { removed: removed.count, purchases: 0, incomes: 0, transfers: 0, errors: [] as string[] };
+  const result = { removed: removed.count, purchases: 0, incomes: 0, circulation: 0, transfers: 0, errors: [] as string[] };
   const conns = await prisma.simplefinConnection.findMany({ where: { userId }, select: { id: true } });
   const items = await prisma.plaidItem.findMany({ where: { userId }, select: { id: true } });
   for (const c of conns) {
@@ -31,6 +31,7 @@ export async function reimportBankTransactions(userId: string, opts: { fetchImpl
       const r = await syncSimplefinConnection(c.id, userId, { force: true, fetchImpl: opts.fetchImpl });
       result.purchases += r.transactionsImported;
       result.incomes += r.incomesImported;
+      result.circulation += r.circulationImported;
       result.transfers += r.transfersSkipped;
     } catch (e: any) {
       result.errors.push(`SimpleFIN: ${e?.message ?? "sync failed"}`);
@@ -41,6 +42,7 @@ export async function reimportBankTransactions(userId: string, opts: { fetchImpl
       const r = await syncPlaidItem(i.id, userId);
       result.purchases += r.transactionsImported;
       result.incomes += r.incomesImported;
+      result.circulation += r.circulationImported;
       result.transfers += r.transfersSkipped;
     } catch (e: any) {
       result.errors.push(`Plaid: ${e?.response?.data?.error_message ?? e?.message ?? "sync failed"}`);

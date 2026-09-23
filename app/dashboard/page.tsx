@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getBankBalance } from "@/lib/bank-balance";
 import Dashboard from "./Dashboard";
 
 export default async function DashboardPage() {
@@ -12,6 +13,7 @@ export default async function DashboardPage() {
     where: { id: userId },
     select: { currency: true, balanceAdjustment: true },
   });
+  const bank = await getBankBalance(userId);
   const entries = await prisma.entry.findMany({
     where: { userId },
     orderBy: { createdAt: "desc" },
@@ -42,6 +44,7 @@ export default async function DashboardPage() {
       userName={session.user?.name ?? null}
       userCurrency={user?.currency ?? "USD"}
       userBalanceAdjustment={user?.balanceAdjustment ?? 0}
+      initialBank={bank}
     />
   );
 }

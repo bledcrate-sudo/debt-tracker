@@ -35,7 +35,8 @@ model Entry {
   minPayment Float?   // required minimum monthly payment, debts only
   dueDay     Int?     // day of month payment is due (1-31), debts only
   // Purchases/one-off bills only: where the money came from. null behaves as "balance".
-  sourceKind  String? // "balance" | "off" | "debt"
+  // Circulation entries (bank-imported, type "circulation") reuse it for direction.
+  sourceKind  String? // "balance" | "off" | "debt"; circulation: "in" | "out"
   debtEntryId String? // the card/loan it went on, when sourceKind is "debt"
   debtEntry   Entry?  @relation("EntryCharge", fields: [debtEntryId], references: [id], onDelete: SetNull)
   // Reverse side: purchases/bills charged to this debt. Deleting the debt

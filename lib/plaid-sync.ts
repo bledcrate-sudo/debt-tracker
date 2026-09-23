@@ -3,7 +3,7 @@ import { plaidClient } from "./plaid";
 import { prisma } from "./prisma";
 import { decryptToken } from "./plaid-crypto";
 import { roundCents } from "./money";
-import { importBankTransactions, type BankTxn } from "./bank-import";
+import { importBankTransactions, type BankTxn, type TxnKind } from "./bank-import";
 
 export type SyncSummary = {
   accountsSeen: number;
@@ -11,12 +11,24 @@ export type SyncSummary = {
   debtsUpdated: number;
   transactionsImported: number;
   incomesImported: number;
+  circulationImported: number;
   transfersSkipped: number;
   // Sum of current depository (checking/savings) balances this sync saw,
   // null if the item has no depository accounts. Surfaced to the user to
   // apply manually — see the note on why this isn't written automatically.
   depositoryBalance: number | null;
 };
+
+// Plaid's own categories where they settle it; otherwise the description
+// decides (lib/bank-import.ts classifyTxn). Cash/cheque deposits count as
+// income, matching the description rules.
+function plaidHint(t: Transaction): TxnKind | undefined {
+  const pfc = t.personal_finance_category;
+  if (!pfc) return undefined;
+  if (pfc.primary === "INCOME" || pfc.detailed === "TRANSFER_IN_DEPOSIT") return "income";
+  if (["TRANSFER_IN", "TRANSFER_OUT", "LOAN_PAYMENTS"].includes(pfc.primary)) return "circulation";
+  return undefined;
+}
 
 // Only import transactions from the last month on a fresh connection —
 // otherwise a first sync can dump a year+ of history into the ledger.
@@ -46,6 +58,7 @@ export async function syncPlaidItem(plaidItemId: string, userId: string): Promis
     debtsUpdated: 0,
     transactionsImported: 0,
     incomesImported: 0,
+    circulationImported: 0,
     transfersSkipped: 0,
     depositoryBalance: null,
   };
@@ -219,6 +232,7 @@ export async function syncPlaidItem(plaidItemId: string, userId: string): Promis
           amount: -t.amount, // Plaid: positive = money out
           date: date > new Date() ? new Date() : date,
           label: t.merchant_name ?? t.name,
+          hint: plaidHint(t),
         });
       }
       const imported = await importBankTransactions({
@@ -238,6 +252,7 @@ export async function syncPlaidItem(plaidItemId: string, userId: string): Promis
       });
       summary.transactionsImported = imported.purchases;
       summary.incomesImported = imported.incomes;
+      summary.circulationImported = imported.circulation;
       summary.transfersSkipped = imported.transfers;
       // Only advance the cursor once everything it covers is imported, so a
       // failure partway through gets retried next sync instead of skipped.
