@@ -71,7 +71,8 @@ description (Plaid's own categories when available):
 Transfers between your own accounts — the same amount out of one and into another within 3 days —
 are skipped on both sides. If you also track your pay as a manual income entry, remove it or it's
 counted twice. Settings → Bank → "Fix imported transactions" deletes everything the importers
-created and re-imports it with the current rules (debts are left alone).
+created and re-imports it with the current rules (debts are left alone) — run it once after
+upgrading to fill the All transactions feed with history imported before the feed existed.
 SimpleFIN refreshes about once a day and allows ~24 requests a day, so syncs within 10 minutes of
 the last one are skipped. The Access URL is stored encrypted with `PLAID_TOKEN_ENCRYPTION_KEY`.
 
@@ -96,6 +97,14 @@ the last one are skipped. The Access URL is stored encrypted with `PLAID_TOKEN_E
   still short. What's left goes partly to an extra payment on the debt the payoff plan targets
   first (the "% to debt" slider, saved to your account) and the rest is free to spend. Give an
   essential store names (e.g. `costco, superstore`) to track spending against it.
+- **Should I buy it?** — enter a price (and optionally what it is) and get Go for it / Wait / Don't
+  buy now, with the reasons: whether it fits this month's free money, whether it would eat the
+  extra debt payment or leave bills short, when you could afford it (from your usual free money
+  and next payday, estimated from past pay dates), and what it costs your debt payoff.
+- **All transactions** — one feed of every transaction from every connected bank and account
+  (Plaid and SimpleFIN together), grouped by day, each tagged with its bank · account and whether
+  it's Income, Spent, Moves or a Transfer between your own accounts, with a per-bank filter and
+  money in/out per bank. On phones it's Money → All.
 - Per-account currency setting
 - Edit or delete any entry; per-user data isolation enforced at the API layer
 - Optional bank sync via Plaid and/or SimpleFIN: link multiple banks, auto-sync credit card/loan

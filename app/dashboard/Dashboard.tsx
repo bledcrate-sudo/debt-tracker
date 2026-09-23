@@ -26,6 +26,9 @@ import {
   anchorLedger,
   planBudget,
   matchesKeywords,
+  shouldBuy,
+  nextPayDate,
+  type BuyAdvice,
   type BankBalance,
   type BudgetItem,
   type BudgetPlan,
@@ -70,7 +73,7 @@ export default function Dashboard({
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Phones show one tab at a time (bottom tab bar); md+ shows everything.
   const [phoneTab, setPhoneTab] = useState<"home" | "money" | "debt">("home");
-  const [moneyTab, setMoneyTab] = useState<"income" | "expense" | "purchase" | "circulation">("purchase");
+  const [moneyTab, setMoneyTab] = useState<"all" | "income" | "expense" | "purchase" | "circulation">("all");
   // Full class names on purpose: Tailwind only generates classes it finds
   // written out in the source, so `md:${display}` would never be built.
   const PHONE_HIDDEN = { block: "hidden md:block", grid: "hidden md:grid", flex: "hidden md:flex" } as const;
@@ -228,10 +231,14 @@ export default function Dashboard({
     setSyncing(false);
   }
 
-  // After a bank sync/connect/unlink: entries and the real balance both change.
+  // After a bank sync/connect/unlink: entries, the real balance and the
+  // transactions feed all change.
+  const [feedVersion, setFeedVersion] = useState(0);
+  const [buyOpen, setBuyOpen] = useState(false);
   async function refreshBankAndEntries() {
     const [, r] = await Promise.all([refreshEntries(), fetch("/api/bank/balance")]);
     if (r.ok) setBank(await r.json());
+    setFeedVersion((v) => v + 1);
   }
 
   function togglePaid(entryId: string, paid: boolean, label: string, amount: number) {
@@ -487,6 +494,53 @@ export default function Dashboard({
     setBudgetExtra(budgetItems.length > 0 && budget.extraToDebt > 0 ? budget.extraToDebt : null);
   }, [budgetItems.length, budget.extraToDebt]);
 
+  // "Should I buy it?" — judged against this month's plan and real cash.
+  const adviseOnBuying = (price: number): BuyAdvice => {
+    // Money still to go out this month for needs that aren't paid yet.
+    const upcomingNeeds = budget.lines.reduce(
+      (s, l) => s + (l.paid ? 0 : l.kind === "essential" ? Math.max(0, l.need - (l.spent ?? 0)) : l.need),
+      0
+    );
+    // Typical month: average pay over the last few months that had any.
+    const pastIncome = ledger
+      .filter((r) => r.month < currentMonth && r.receivedIncome > 0)
+      .slice(-3)
+      .map((r) => r.receivedIncome);
+    const avgIncome = pastIncome.length
+      ? pastIncome.reduce((a, b) => a + b, 0) / pastIncome.length
+      : monthRow?.receivedIncome ?? 0;
+    const monthlyFree = Math.max(0, avgIncome - budget.totalNeed) * (1 - payoutPct / 100);
+    // What it costs to spend this instead of putting it on the priority debt.
+    const target = payoffOrder.find((d) => d.amount > 0.005);
+    let debtCost: { months: number; interest: number } | null = null;
+    if (target && plan.monthsToClear !== Infinity) {
+      const without = simulatePayoff(
+        debts.map((d) => (d.id === target.id ? { ...d, amount: Math.max(0, d.amount - price) } : d)),
+        strategy,
+        monthlyToDebt
+      );
+      if (without.monthsToClear !== Infinity)
+        debtCost = {
+          months: Math.max(0, plan.monthsToClear - without.monthsToClear),
+          interest: Math.max(0, plan.totalInterest - without.totalInterest),
+        };
+    }
+    return shouldBuy(
+      {
+        price,
+        freeToSpend: budget.freeToSpend,
+        extraToDebt: budget.extraToDebt,
+        extraTarget: budget.extraTarget?.label ?? null,
+        cash: ledger[ledger.length - 1]?.closing ?? 0,
+        upcomingNeeds,
+        monthlyFree,
+        nextPay: nextPayDate(income.filter((e) => e.frequency !== "monthly").map((e) => new Date(e.createdAt))),
+        debtCost,
+      },
+      fmt
+    );
+  };
+
   // Overall payoff progress across all debts (paid vs everything owed so far).
   const totalOwedEver = useMemo(
     () => debts.reduce((s, d) => s + (d.originalAmount ?? d.amount) + (d.chargedSoFar ?? 0), 0),
@@ -738,6 +792,22 @@ export default function Dashboard({
         </p>
       )}
 
+      <button
+        onClick={() => setBuyOpen(true)}
+        className={`w-full text-left bg-neutral-900/60 border border-neutral-800 hover:border-red-500/50 rounded-2xl px-4 md:px-5 py-3 flex items-center gap-3 transition ${phoneShow(phoneTab === "home")}`}
+      >
+        <span className="w-9 h-9 shrink-0 rounded-xl bg-red-500/15 border border-red-500/30 text-red-300 grid place-items-center">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4zM3 6h18M16 10a4 4 0 0 1-8 0" />
+          </svg>
+        </span>
+        <span className="flex-1 min-w-0">
+          <span className="block font-semibold">Should I buy it?</span>
+          <span className="block text-xs text-neutral-500">Enter a price — see if now's the right time</span>
+        </span>
+        <span className="text-neutral-500 text-lg">›</span>
+      </button>
+
       <BudgetSection
         className={phoneShow(phoneTab === "home")}
         plan={budget}
@@ -771,9 +841,10 @@ export default function Dashboard({
 
       {/* Phones: one money list at a time. */}
       {phoneTab === "money" && (
-        <div className="md:hidden grid grid-cols-4 gap-1 bg-neutral-900/80 border border-neutral-800 rounded-xl p-1 sticky top-[max(0.5rem,env(safe-area-inset-top))] z-30 backdrop-blur">
+        <div className="md:hidden grid grid-cols-5 gap-1 bg-neutral-900/80 border border-neutral-800 rounded-xl p-1 sticky top-[max(0.5rem,env(safe-area-inset-top))] z-30 backdrop-blur">
           {(
             [
+              ["all", "All", null],
               ["income", "Income", totalIncome],
               ["expense", "Bills", totalExpense],
               ["purchase", "Spent", totalPurchases],
@@ -788,8 +859,11 @@ export default function Dashboard({
               }`}
             >
               <span className="block text-xs font-semibold">{label}</span>
-              <span className={`block text-[11px] tabular-nums ${moneyTab === key ? "text-neutral-900" : "text-neutral-500"}`}>
-                {fmt(amount)}
+              <span className={`block text-[11px] tabular-nums truncate ${moneyTab === key ? "text-neutral-900" : "text-neutral-500"}`}>
+                {amount == null
+                  ? "banks"
+                  : // Whole dollars: five tabs leave no room for cents on a phone.
+                    new Intl.NumberFormat(undefined, { style: "currency", currency, maximumFractionDigits: 0 }).format(amount)}
               </span>
             </button>
           ))}
@@ -858,6 +932,12 @@ export default function Dashboard({
           onLogPayment={(id, label) => setDebtModal({ id, label })}
         />
       </section>
+
+      <TransactionsFeed
+        className={phoneShow(phoneTab === "money" && moneyTab === "all")}
+        month={selectedMonth}
+        version={feedVersion}
+      />
 
       {/* Summary table */}
       <section className={`bg-neutral-900/60 border border-neutral-800 rounded-2xl overflow-hidden ${phoneShow(phoneTab === "money")}`}>
@@ -1166,6 +1246,14 @@ export default function Dashboard({
 
       <PhoneTabBar tab={phoneTab} onTab={goTab} onSettings={() => setSettingsOpen(true)} />
 
+      {buyOpen && (
+        <ShouldBuyModal
+          isCurrentMonth={selectedMonth === currentMonth}
+          advise={adviseOnBuying}
+          onClose={() => setBuyOpen(false)}
+        />
+      )}
+
       {modalType && (
         <EntryModal
           type={modalType}
@@ -1445,7 +1533,7 @@ function CategoryTable({
                         onClick={() => onLogPayment(e.id, e.label)}
                         className="px-2 py-1 rounded-lg text-xs font-semibold whitespace-nowrap bg-rose-700/15 border border-rose-700/30 text-rose-400 hover:bg-rose-700/25"
                       >
-                        + Pay<span className="hidden sm:inline">ment</span>
+                        + Pay
                       </button>
                     )}
                     <button
@@ -1481,6 +1569,247 @@ function CategoryTable({
         </button>
       )}
     </div>
+  );
+}
+
+function ShouldBuyModal({
+  isCurrentMonth,
+  advise,
+  onClose,
+}: {
+  isCurrentMonth: boolean;
+  advise: (price: number) => BuyAdvice;
+  onClose: () => void;
+}) {
+  useEscapeClose(onClose);
+  const [what, setWhat] = useState("");
+  const [price, setPrice] = useState("");
+  const [advice, setAdvice] = useState<BuyAdvice | null>(null);
+  const [asked, setAsked] = useState<{ what: string; price: number } | null>(null);
+  const fmt = useContext(CurrencyContext);
+
+  function check(e: React.FormEvent) {
+    e.preventDefault();
+    const p = parseFloat(price.replace(/[^0-9.]/g, ""));
+    if (!Number.isFinite(p) || p <= 0) return;
+    setAdvice(advise(p));
+    setAsked({ what: what.trim(), price: p });
+  }
+
+  const tone = {
+    yes: { box: "bg-neutral-500/10 border-neutral-400/40", badge: "bg-neutral-200 text-neutral-950", label: "Go for it" },
+    wait: { box: "bg-red-400/10 border-red-400/40", badge: "bg-red-400 text-neutral-950", label: "Wait" },
+    no: { box: "bg-rose-500/10 border-rose-500/40", badge: "bg-rose-500 text-white", label: "Don't buy now" },
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 sm:p-4" onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Should I buy it?"
+        className="bg-neutral-900 border border-neutral-800 rounded-t-2xl sm:rounded-2xl pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:pb-6 px-6 pt-6 w-full max-w-md shadow-2xl max-h-[90dvh] overflow-y-auto"
+      >
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-xl font-bold">Should I buy it?</h2>
+          <button onClick={onClose} aria-label="Close" className="text-neutral-500 hover:text-white text-lg leading-none p-2 -m-1">
+            ✕
+          </button>
+        </div>
+        <p className="text-sm text-neutral-400 mb-4">
+          Checks the price against this month's pay, bills, debt payments and what's in your bank.
+        </p>
+        {!isCurrentMonth && (
+          <p className="text-xs text-red-300 mb-3">Based on this month's numbers, not the month you're viewing.</p>
+        )}
+        <form onSubmit={check} className="space-y-3">
+          <input
+            value={what}
+            onChange={(e) => setWhat(e.target.value)}
+            placeholder="What is it? (optional)"
+            className="w-full px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none"
+          />
+          <div className="flex gap-2">
+            <input
+              value={price}
+              onChange={(e) => setPrice(e.target.value)}
+              placeholder="Price"
+              inputMode="decimal"
+              required
+              className="flex-1 min-w-0 px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none tabular-nums"
+            />
+            <button className="px-5 py-3 rounded-xl bg-gradient-to-b from-red-500 to-red-600 hover:to-red-500 text-neutral-950 font-semibold">
+              Check
+            </button>
+          </div>
+        </form>
+
+        {advice && asked && (
+          <div className={`mt-4 rounded-xl border p-4 space-y-2 ${tone[advice.verdict].box}`} aria-live="polite">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded ${tone[advice.verdict].badge}`}>
+                {tone[advice.verdict].label}
+              </span>
+              <span className="text-sm text-neutral-400">
+                {asked.what ? `${asked.what} · ` : ""}
+                {fmt(asked.price)}
+              </span>
+            </div>
+            <p className="font-semibold text-white">{advice.headline}</p>
+            <ul className="space-y-1.5 text-sm text-neutral-300 list-disc pl-5">
+              {advice.reasons.map((r, i) => (
+                <li key={i}>{r}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+type FeedRow = {
+  id: string;
+  institution: string | null;
+  account: string;
+  date: string;
+  amount: number;
+  description: string;
+  kind: "income" | "purchase" | "circulation" | "transfer";
+};
+
+const KIND_LABEL: Record<FeedRow["kind"], string> = {
+  income: "Income",
+  purchase: "Spent",
+  circulation: "Moves",
+  transfer: "Transfer",
+};
+
+// Every transaction from every connected bank, merged into one list like a
+// banking app's, tagged with the bank/account it came from and its section.
+function TransactionsFeed({ month, version, className = "" }: { month: string; version: number; className?: string }) {
+  const fmt = useContext(CurrencyContext);
+  const [rows, setRows] = useState<FeedRow[] | null>(null);
+  const [bank, setBank] = useState<string>("all");
+  const [showAll, setShowAll] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRows(null);
+    fetch(`/api/bank/transactions?month=${month}`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => !cancelled && setRows(data))
+      .catch(() => !cancelled && setRows([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [month, version]);
+
+  const bankOf = (r: FeedRow) => r.institution || r.account;
+  const banks = useMemo(() => [...new Set((rows ?? []).map(bankOf))], [rows]);
+  const shown = (rows ?? []).filter((r) => bank === "all" || bankOf(r) === bank);
+  const LIMIT = 15;
+  const visible = showAll ? shown : shown.slice(0, LIMIT);
+  const totals = useMemo(() => {
+    const t = new Map<string, { in: number; out: number }>();
+    for (const r of rows ?? []) {
+      if (r.kind === "transfer") continue; // moves between your own accounts net out
+      const k = bankOf(r);
+      const cur = t.get(k) ?? { in: 0, out: 0 };
+      if (r.amount > 0) cur.in += r.amount;
+      else cur.out -= r.amount;
+      t.set(k, cur);
+    }
+    return t;
+  }, [rows]);
+
+  const dayLabel = (iso: string) =>
+    new Date(iso).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  let lastDay = "";
+
+  return (
+    <section className={`bg-neutral-900/60 border border-neutral-800 rounded-2xl overflow-hidden ${className}`}>
+      <div className="px-4 md:px-5 py-3 border-b border-neutral-800 space-y-2">
+        <div className="flex items-baseline justify-between gap-2">
+          <h2 className="text-lg font-bold">All transactions</h2>
+          <span className="text-xs text-neutral-500">{rows ? `${shown.length} this month` : ""}</span>
+        </div>
+        {banks.length > 1 && (
+          <div className="flex gap-1.5 overflow-x-auto -mx-1 px-1 pb-0.5">
+            {["all", ...banks].map((b) => (
+              <button
+                key={b}
+                onClick={() => setBank(b)}
+                className={`shrink-0 px-3 py-1 rounded-full text-xs border ${
+                  bank === b ? "bg-red-500 text-neutral-950 border-red-500 font-semibold" : "border-neutral-700 text-neutral-300"
+                }`}
+              >
+                {b === "all" ? "All banks" : b}
+              </button>
+            ))}
+          </div>
+        )}
+        {totals.size > 0 && (
+          <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-neutral-500 tabular-nums">
+            {[...totals].filter(([k]) => bank === "all" || k === bank).map(([k, t]) => (
+              <span key={k}>
+                <span className="text-neutral-300">{k}</span> +{fmt(t.in)} in · −{fmt(t.out)} out
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+      {rows === null ? (
+        <p className="px-5 py-6 text-sm text-neutral-500 italic">Loading…</p>
+      ) : shown.length === 0 ? (
+        <p className="px-5 py-6 text-sm text-neutral-500">
+          No bank transactions this month. Connect a bank in Settings → Bank — or, if you already have, use "Fix imported
+          transactions" there once to fill this list in.
+        </p>
+      ) : (
+        <ul className="divide-y divide-neutral-800/70">
+          {visible.map((r) => {
+            const day = dayLabel(r.date);
+            const header = day !== lastDay;
+            lastDay = day;
+            return (
+              <li key={r.id}>
+                {header && (
+                  <p className="px-4 md:px-5 pt-3 pb-1 text-[11px] uppercase tracking-wider text-neutral-500 bg-neutral-900/80">{day}</p>
+                )}
+                <div className="px-4 md:px-5 py-2 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium break-words">{r.description}</p>
+                    <p className="text-xs text-neutral-500 flex flex-wrap gap-x-2">
+                      <span>
+                        {r.institution ? `${r.institution} · ` : ""}
+                        {r.account}
+                      </span>
+                      <span className={r.kind === "income" ? "text-neutral-200" : r.kind === "purchase" ? "text-red-400" : ""}>
+                        {KIND_LABEL[r.kind]}
+                      </span>
+                    </p>
+                  </div>
+                  <span className={`shrink-0 tabular-nums text-sm font-semibold ${r.amount > 0 ? "text-neutral-100" : "text-red-400"}`}>
+                    {r.amount > 0 ? "+" : "−"}
+                    {fmt(Math.abs(r.amount))}
+                  </span>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {shown.length > LIMIT && (
+        <button
+          onClick={() => setShowAll((v) => !v)}
+          className="w-full py-2 text-xs text-neutral-400 hover:text-white border-t border-neutral-800"
+        >
+          {showAll ? "Show fewer" : `Show all ${shown.length}`}
+        </button>
+      )}
+    </section>
   );
 }
 

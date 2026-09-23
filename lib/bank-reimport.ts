@@ -16,6 +16,7 @@ export async function reimportBankTransactions(userId: string, opts: { fetchImpl
       where: { userId, note: IMPORT_NOTE, type: { in: IMPORTED_TYPES } },
     }),
     prisma.simplefinTransaction.deleteMany({ where: { connection: { userId } } }),
+    prisma.bankTransaction.deleteMany({ where: { userId } }),
     prisma.plaidTransaction.deleteMany({ where: { plaidItem: { userId } } }),
     // No previous sync -> the next one reads from a month before each
     // connection was made (see the start/cutoff logic in each importer).

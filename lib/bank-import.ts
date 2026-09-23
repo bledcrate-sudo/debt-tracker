@@ -13,6 +13,9 @@ export type BankTxn = {
   // Provider's own categorization when it has one (Plaid does), which beats
   // guessing from the description.
   hint?: TxnKind;
+  // Shown in the merged transactions feed.
+  institution?: string | null;
+  accountName?: string;
 };
 
 // income: pay and deposits. purchase: spending. circulation: money moving
@@ -81,6 +84,7 @@ export type ImportCounts = { purchases: number; incomes: number; circulation: nu
 // duplicate key (P2002) rolls the Entry back.
 export async function importBankTransactions(opts: {
   userId: string;
+  provider: "plaid" | "simplefin";
   txns: BankTxn[];
   alreadyImported: (keys: string[]) => Promise<Set<string>>;
   markImported: (tx: Prisma.TransactionClient, key: string) => Promise<unknown>;
@@ -91,6 +95,26 @@ export async function importBankTransactions(opts: {
 
   const partners = findTransferPairs(txns);
   const before = await opts.alreadyImported(txns.map((t) => t.key));
+  // Row for the merged transactions feed (every transaction, transfers too).
+  const feedRow = (t: BankTxn, kind: TxnKind | "transfer", entryId: string | null) => ({
+    userId: opts.userId,
+    provider: opts.provider,
+    key: t.key,
+    institution: t.institution ?? null,
+    account: t.accountName || "Account",
+    date: t.date,
+    amount: roundCents(t.amount),
+    description: (t.label || "Bank transaction").slice(0, 200),
+    kind,
+    entryId,
+  });
+
+  // Imported before the feed existed: add them to it (unlinked), so the feed
+  // fills in as syncs re-read recent history. A re-import links everything.
+  const backfill = txns
+    .filter((t) => before.has(t.key))
+    .map((t) => feedRow(t, partners.has(t.key) ? "transfer" : classifyTxn(t), null));
+  if (backfill.length) await prisma.bankTransaction.createMany({ data: backfill, skipDuplicates: true });
 
   for (const t of txns) {
     if (before.has(t.key)) continue;
@@ -103,8 +127,19 @@ export async function importBankTransactions(opts: {
     try {
       await prisma.$transaction(async (tx) => {
         await opts.markImported(tx, t.key);
-        if (skipAsTransfer) return;
-        await tx.entry.create({
+        const record = (kind: TxnKind | "transfer", entryId: string | null) => {
+          const row = feedRow(t, kind, entryId);
+          return tx.bankTransaction.upsert({
+            where: { provider_key: { provider: row.provider, key: row.key } },
+            create: row,
+            update: { kind, entryId },
+          });
+        };
+        if (skipAsTransfer) {
+          await record("transfer", null);
+          return;
+        }
+        const entry = await tx.entry.create({
           data: {
             userId: opts.userId,
             type: kind,
@@ -118,6 +153,7 @@ export async function importBankTransactions(opts: {
             createdAt: t.date,
           },
         });
+        await record(kind, entry.id);
       });
       if (skipAsTransfer) counts.transfers++;
       else if (kind === "purchase") counts.purchases++;

@@ -431,3 +431,133 @@ export function planBudget(input: {
     freeToSpend: cents(leftover - extraToDebt),
   };
 }
+
+// ---- Should I buy it? ------------------------------------------------------
+
+// Next payday from past pay dates: last pay + the typical gap between pays
+// (median, so one odd deposit doesn't skew it). Null without a pattern.
+export function nextPayDate(payDates: Date[], today = new Date()): Date | null {
+  const days = [...new Set(payDates.map((d) => Math.floor(d.getTime() / 86400_000)))].sort((a, b) => a - b);
+  if (days.length < 2) return null;
+  const gaps = days
+    .slice(1)
+    .map((d, i) => d - days[i])
+    .filter((g) => g >= 7 && g <= 35) // ignore same-week bonuses and long breaks
+    .sort((a, b) => a - b);
+  if (gaps.length === 0) return null;
+  const gap = gaps[Math.floor(gaps.length / 2)];
+  const todayDay = Math.floor(today.getTime() / 86400_000);
+  let next = days[days.length - 1] + gap;
+  while (next < todayDay) next += gap;
+  return new Date(next * 86400_000 + 12 * 3600_000);
+}
+
+export type BuyAdvice = {
+  verdict: "yes" | "wait" | "no";
+  headline: string;
+  reasons: string[];
+};
+
+// Whether buying something for `price` right now fits the user's money:
+// "yes" when it fits in this month's free-to-spend and every need is still
+// covered; "wait" when it would eat the extra debt payment or needs saving
+// first; "no" when it would leave this month's needs short or would take
+// over a year to save for.
+export function shouldBuy(
+  input: {
+    price: number;
+    freeToSpend: number; // this month, after needs and the extra debt payment
+    extraToDebt: number; // this month's planned extra debt payment
+    extraTarget: string | null;
+    cash: number; // money in the bank now
+    upcomingNeeds: number; // still to go out this month for bills, minimums, essentials
+    monthlyFree: number; // typical free-to-spend in a month
+    nextPay: Date | null;
+    debtCost: { months: number; interest: number } | null; // if this money doesn't go to debt
+  },
+  fmt: Formatter,
+  today = new Date()
+): BuyAdvice {
+  const { price } = input;
+  const free = Math.max(0, input.freeToSpend);
+  const cashAfter = input.cash - price - input.upcomingNeeds;
+  const date = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const debtNote =
+    input.debtCost && (input.debtCost.months > 0 || input.debtCost.interest >= 1)
+      ? `Put toward debt instead, it would make you debt-free ${
+          input.debtCost.months > 0 ? `${input.debtCost.months} month${input.debtCost.months === 1 ? "" : "s"} sooner` : "sooner"
+        } and save about ${fmt(input.debtCost.interest)} in interest.`
+      : null;
+  const saveFor = (amount: number) => {
+    if (input.monthlyFree <= 0) return null;
+    const months = Math.ceil(amount / input.monthlyFree);
+    const by = new Date(today.getFullYear(), today.getMonth() + months, 1);
+    return { months, label: by.toLocaleDateString(undefined, { month: "long", year: "numeric" }) };
+  };
+  const nextPay = input.nextPay ? `Your next pay should land around ${date(input.nextPay)}.` : null;
+
+  if (cashAfter < 0) {
+    const plan = saveFor(price);
+    return {
+      verdict: "no",
+      headline: "Not now — you'd come up short this month.",
+      reasons: [
+        `After buying it you'd be ${fmt(-cashAfter)} short of what your bills, debt minimums and essentials still need this month.`,
+        plan && plan.months <= 12
+          ? `Setting aside your free money, you could afford it around ${plan.label}.`
+          : input.monthlyFree > 0
+          ? `At about ${fmt(input.monthlyFree)} free a month, it would take over a year to save for.`
+          : "Your pay doesn't leave anything free after needs and debt payments yet.",
+        ...(nextPay ? [nextPay] : []),
+      ],
+    };
+  }
+
+  if (price <= free) {
+    return {
+      verdict: "yes",
+      headline: "Yes — it fits in this month's free money.",
+      reasons: [
+        `You'd still have ${fmt(free - price)} free to spend this month, with every bill and minimum covered.`,
+        ...(debtNote ? [debtNote] : []),
+      ],
+    };
+  }
+
+  if (price <= free + input.extraToDebt) {
+    return {
+      verdict: "wait",
+      headline: "Only by skipping your extra debt payment — better to wait.",
+      reasons: [
+        `You have ${fmt(free)} free; the other ${fmt(price - free)} would come out of this month's extra payment${
+          input.extraTarget ? ` on ${input.extraTarget}` : ""
+        }.`,
+        ...(debtNote ? [debtNote] : []),
+        ...(nextPay ? [nextPay] : []),
+      ],
+    };
+  }
+
+  const plan = saveFor(price - free);
+  if (!plan || plan.months > 12) {
+    return {
+      verdict: "no",
+      headline: "Not realistic right now.",
+      reasons: [
+        input.monthlyFree > 0
+          ? `At about ${fmt(input.monthlyFree)} free a month, it would take over a year to save for.`
+          : "Your pay doesn't leave anything free after needs and debt payments yet.",
+        ...(debtNote ? [debtNote] : []),
+      ],
+    };
+  }
+  return {
+    verdict: "wait",
+    headline: `Wait — save for it${plan.months <= 1 ? " until next month" : ` for about ${plan.months} months`}.`,
+    reasons: [
+      `It's ${fmt(price - free)} more than you have free this month.`,
+      `At about ${fmt(input.monthlyFree)} free a month, you'd have it by ${plan.label}.`,
+      ...(debtNote ? [debtNote] : []),
+    ],
+  };
+}

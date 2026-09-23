@@ -22,6 +22,7 @@ model User {
   plaidItems PlaidItem[]
   simplefinConnections SimplefinConnection[]
   budgetItems BudgetItem[]
+  bankTransactions BankTransaction[]
   // Share (%) of money left after bills, debt minimums and essentials that
   // goes to extra debt payments; the rest is free to spend. Shared by the
   // Budget section and the Debt payment plan so their advice agrees.
@@ -58,6 +59,8 @@ model Entry {
   plaidAccount PlaidAccount? @relation("PlaidAccountEntry")
   // Same, for a card/loan synced through SimpleFIN.
   simplefinAccount SimplefinAccount? @relation("SimplefinAccountEntry")
+  // The bank transaction(s) this entry was imported from.
+  bankTransactions BankTransaction[]
 
   @@index([userId])
   @@index([debtEntryId])
@@ -221,4 +224,27 @@ model BudgetItem {
   createdAt DateTime @default(now())
 
   @@index([userId])
+}
+
+// Every transaction the bank importers saw, across all connected banks and
+// accounts — the merged "bank app" feed. Kept alongside the Entries they
+// produce (entryId), and also for own-account transfers, which get no Entry.
+model BankTransaction {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider    String // "plaid" | "simplefin"
+  key         String // the provider's dedupe key for it
+  institution String? // bank name
+  account     String // account display name, e.g. "Chequing ••1234"
+  date        DateTime
+  amount      Float // > 0 money in, < 0 money out
+  description String
+  kind        String // "income" | "purchase" | "circulation" | "transfer"
+  entryId     String?
+  entry       Entry?   @relation(fields: [entryId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+
+  @@unique([provider, key])
+  @@index([userId, date])
 }

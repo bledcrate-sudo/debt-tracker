@@ -301,12 +301,15 @@ export async function syncSimplefinConnection(
         amount: parseFloat(t.amount), // positive = deposit
         date: transactionDate(t, now),
         label: t.payee || t.description,
+        institution: orgName,
+        accountName: acct.name,
       });
     }
   }
 
   const imported = await importBankTransactions({
     userId,
+    provider: "simplefin",
     txns: cashTxns,
     alreadyImported: async (keys) =>
       new Set(

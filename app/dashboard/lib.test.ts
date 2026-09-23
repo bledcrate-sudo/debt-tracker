@@ -9,6 +9,9 @@ import {
   anchorLedger,
   planBudget,
   matchesKeywords,
+  shouldBuy,
+  nextPayDate,
+  makeFmt,
   type SimDebt,
   type Entry,
 } from "./lib";
@@ -254,5 +257,75 @@ describe("matchesKeywords", () => {
     expect(matchesKeywords("TIM HORTONS", "costco, superstore")).toBe(false);
     expect(matchesKeywords("anything", null)).toBe(false);
     expect(matchesKeywords("anything", " , ")).toBe(false);
+  });
+});
+
+describe("nextPayDate", () => {
+  const d = (iso: string) => new Date(`${iso}T12:00:00Z`);
+  it("projects the next biweekly pay", () => {
+    const next = nextPayDate([d("2026-08-21"), d("2026-09-04"), d("2026-09-18")], d("2026-09-23"));
+    expect(next?.toISOString().slice(0, 10)).toBe("2026-10-02");
+  });
+  it("ignores a one-off bonus a few days after pay", () => {
+    const next = nextPayDate([d("2026-08-01"), d("2026-08-03"), d("2026-09-01")], d("2026-09-10"));
+    // Gap 2 days (bonus) is ignored; 29-day gap -> Sept 30.
+    expect(next?.toISOString().slice(0, 10)).toBe("2026-09-30");
+  });
+  it("rolls forward past today and needs at least two pays", () => {
+    expect(nextPayDate([d("2026-08-01"), d("2026-08-15")], d("2026-09-20"))?.toISOString().slice(0, 10)).toBe("2026-09-26");
+    expect(nextPayDate([d("2026-09-01")], d("2026-09-20"))).toBeNull();
+  });
+});
+
+describe("shouldBuy", () => {
+  const fmt = makeFmt("CAD");
+  const today = new Date("2026-09-23T12:00:00Z");
+  const base = {
+    freeToSpend: 300,
+    extraToDebt: 300,
+    extraTarget: "Visa",
+    cash: 2300,
+    upcomingNeeds: 600,
+    monthlyFree: 250,
+    nextPay: new Date("2026-10-02T12:00:00Z"),
+    debtCost: { months: 1, interest: 42 },
+  };
+  it("says yes when it fits in free money and needs stay covered", () => {
+    const a = shouldBuy({ ...base, price: 120 }, fmt, today);
+    expect(a.verdict).toBe("yes");
+    expect(a.reasons[0]).toContain("180.00 free");
+    expect(a.reasons.join(" ")).toContain("1 month sooner");
+  });
+  it("says wait when it would eat the extra debt payment", () => {
+    const a = shouldBuy({ ...base, price: 450 }, fmt, today);
+    expect(a.verdict).toBe("wait");
+    expect(a.headline).toMatch(/extra debt payment/);
+    expect(a.reasons[0]).toContain("150.00 would come out of this month's extra payment on Visa");
+  });
+  it("says wait with a save-by month when it's more than this month allows", () => {
+    const a = shouldBuy({ ...base, price: 1000 }, fmt, today);
+    expect(a.verdict).toBe("wait");
+    // (1000 - 300) / 250 = 2.8 -> 3 months -> December 2026
+    expect(a.headline).toMatch(/about 3 months/);
+    expect(a.reasons.join(" ")).toContain("December 2026");
+  });
+  it("says no when it would leave this month's needs short", () => {
+    const a = shouldBuy({ ...base, price: 1800 }, fmt, today);
+    expect(a.verdict).toBe("no");
+    expect(a.reasons[0]).toContain("100.00 short");
+  });
+  it("says no, and how long saving would take, when it would leave needs short", () => {
+    const a = shouldBuy({ ...base, price: 20000 }, fmt, today);
+    expect(a.verdict).toBe("no");
+    expect(a.reasons[1]).toMatch(/over a year to save/);
+  });
+  it("says no when saving would take over a year", () => {
+    const a = shouldBuy({ ...base, cash: 20000, price: 5000 }, fmt, today);
+    expect(a.verdict).toBe("no");
+    expect(a.headline).toMatch(/Not realistic/);
+  });
+  it("leaves out the debt note when there's no debt", () => {
+    const a = shouldBuy({ ...base, price: 50, debtCost: null }, fmt, today);
+    expect(a.reasons).toHaveLength(1);
   });
 });

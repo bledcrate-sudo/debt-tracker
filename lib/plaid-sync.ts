@@ -219,6 +219,7 @@ export async function syncPlaidItem(plaidItemId: string, userId: string): Promis
         Math.min(Date.now(), item.createdAt.getTime()) - TRANSACTION_LOOKBACK_DAYS * 86400_000
       );
       const txns: BankTxn[] = [];
+      const accountNames = new Map(accounts.map((a) => [a.account_id, a.mask ? `${a.name} ••${a.mask}` : a.name]));
       for (const t of added) {
         // Skip pending (amount can still change), other accounts, old history.
         if (t.pending || !depositoryAccountIds.has(t.account_id)) continue;
@@ -233,10 +234,13 @@ export async function syncPlaidItem(plaidItemId: string, userId: string): Promis
           date: date > new Date() ? new Date() : date,
           label: t.merchant_name ?? t.name,
           hint: plaidHint(t),
+          institution: item.institutionName,
+          accountName: accountNames.get(t.account_id),
         });
       }
       const imported = await importBankTransactions({
         userId,
+        provider: "plaid",
         txns,
         alreadyImported: async (keys) =>
           new Set(
