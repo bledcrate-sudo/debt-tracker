@@ -1,4 +1,4 @@
-# Debt Tracker
+# Debty
 
 Next.js + React app for tracking income, bills, purchases, and debt payoff — with a
 month-by-month ledger, an avalanche/snowball payoff planner, and an iOS build via Capacitor.

@@ -25,7 +25,7 @@ export default function LoginPage() {
     <main className="min-h-screen grid place-items-center px-4">
       <div className="w-full max-w-md bg-neutral-900/70 backdrop-blur border border-neutral-800 rounded-2xl p-8 shadow-2xl">
         <h1 className="text-3xl font-bold mb-1">Welcome back</h1>
-        <p className="text-neutral-400 mb-6">Log in to your debt tracker</p>
+        <p className="text-neutral-400 mb-6">Log in to Debty</p>
         <form onSubmit={submit} className="space-y-4">
           <input
             type="email"

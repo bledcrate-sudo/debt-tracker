@@ -84,12 +84,12 @@ jobs:
           echo "Using app: $APP_PATH"
           mkdir -p build/Payload
           cp -R "$APP_PATH" build/Payload/
-          cd build && zip -qr DebtTracker-unsigned.ipa Payload
-          ls -lh DebtTracker-unsigned.ipa
+          cd build && zip -qr Debty-unsigned.ipa Payload
+          ls -lh Debty-unsigned.ipa
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DebtTracker-unsigned-ipa
-          path: ios/App/build/DebtTracker-unsigned.ipa
+          name: Debty-unsigned-ipa
+          path: ios/App/build/Debty-unsigned.ipa
           retention-days: 30

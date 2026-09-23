@@ -2,7 +2,7 @@ import type { CapacitorConfig } from "@capacitor/cli";
 
 const config: CapacitorConfig = {
   appId: "com.debttracker.app",
-  appName: "Debt Tracker",
+  appName: "Debty",
   webDir: "public",
   server: {
     // Replace with your deployed Next.js URL (Vercel / Railway / Fly etc.)

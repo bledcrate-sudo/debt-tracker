@@ -43,7 +43,7 @@ Note the deployed URL — you'll need it.
 2. Go to **Actions → Build unsigned iOS IPA → Run workflow**.
 3. Enter your deployed URL (e.g. `https://your-app.vercel.app`).
 4. Wait ~10–15 min.
-5. Download `DebtTracker-unsigned-ipa` artifact → unzip → you have `DebtTracker-unsigned.ipa`.
+5. Download `Debty-unsigned-ipa` artifact → unzip → you have `Debty-unsigned.ipa`.
 
 Workflow file: `.github/workflows/build-ipa.yml`.
 
@@ -78,7 +78,7 @@ Apple requires `.ipa` to be signed before installing. Pick one:
 
 1. Install Sideloadly: https://sideloadly.io/
 2. Plug iPhone in via USB.
-3. Drag `DebtTracker-unsigned.ipa` into Sideloadly.
+3. Drag `Debty-unsigned.ipa` into Sideloadly.
 4. Sign in with your Apple ID (free is fine).
 5. Click **Start** → app installs.
 6. On iPhone: **Settings → General → VPN & Device Management → trust your Apple ID**.

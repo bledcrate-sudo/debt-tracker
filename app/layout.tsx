@@ -1,8 +1,13 @@
 import "./globals.css";
-import type { Viewport } from "next";
+import type { Metadata, Viewport } from "next";
 import { Providers } from "./providers";
 
-export const metadata = { title: "Debt Tracker", description: "Track debt, income, expenses" };
+export const metadata: Metadata = {
+  title: "Debty",
+  description: "Track debt, income, expenses",
+  // Name used when the site is added to an iPhone home screen.
+  appleWebApp: { title: "Debty", statusBarStyle: "black-translucent" },
+};
 
 // viewport-fit=cover lets the layout read the iPhone safe areas (notch, home
 // indicator) through env(safe-area-inset-*), used by the phone tab bar and
