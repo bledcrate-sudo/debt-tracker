@@ -47,9 +47,8 @@ model Entry {
   debtPayments DebtPayment[]
   chargedPayments Payment[] @relation("PaymentCharge")
   // Set on a debt Entry created automatically from a linked Plaid credit
-  // card / loan account, and on a purchase imported from a bank transaction.
-  plaidAccount      PlaidAccount? @relation("PlaidAccountEntry")
-  plaidTransactionId String?      @unique
+  // card / loan account.
+  plaidAccount PlaidAccount? @relation("PlaidAccountEntry")
 
   @@index([userId])
   @@index([debtEntryId])
@@ -100,6 +99,7 @@ model PlaidItem {
   error           String?
   createdAt       DateTime @default(now())
   accounts        PlaidAccount[]
+  transactions    PlaidTransaction[]
 
   @@index([userId])
 }
@@ -123,6 +123,21 @@ model PlaidAccount {
   // for debt accounts instead of overwriting the Entry's amount outright.
   lastBalance  Float?
   lastSyncedAt DateTime?
+
+  @@index([plaidItemId])
+}
+
+// Plaid transaction ids already imported as purchase Entries, so re-syncing
+// never duplicates one. Kept in its own table rather than as a unique column
+// on Entry: adding a unique constraint to an existing, populated table makes
+// `prisma db push` stop for data-loss confirmation, which fails the deploy.
+// The row outlives the Entry on purpose — deleting an imported purchase
+// shouldn't make the next sync bring it back.
+model PlaidTransaction {
+  transactionId String    @id // Plaid's transaction_id
+  plaidItemId   String
+  plaidItem     PlaidItem @relation(fields: [plaidItemId], references: [id], onDelete: Cascade)
+  createdAt     DateTime  @default(now())
 
   @@index([plaidItemId])
 }

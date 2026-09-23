@@ -192,7 +192,6 @@ export async function syncPlaidItem(plaidItemId: string, userId: string): Promis
         cursor = res.data.next_cursor;
         hasMore = res.data.has_more;
       }
-      await prisma.plaidItem.update({ where: { id: item.id }, data: { cursor, status: "active", error: null } });
 
       const cutoff = new Date();
       cutoff.setDate(cutoff.getDate() - TRANSACTION_LOOKBACK_DAYS);
@@ -202,23 +201,33 @@ export async function syncPlaidItem(plaidItemId: string, userId: string): Promis
         if (t.pending || t.amount <= 0 || !depositoryAccountIds.has(t.account_id)) continue;
         if (new Date(t.date) < cutoff) continue;
         try {
-          await prisma.entry.create({
-            data: {
-              userId,
-              type: "purchase",
-              label: t.merchant_name ?? t.name,
-              amount: roundCents(t.amount),
-              frequency: "once",
-              sourceKind: "balance",
-              note: "Synced from bank",
-              plaidTransactionId: t.transaction_id,
-            },
+          // The PlaidTransaction insert is the dedupe guard: its primary key
+          // is the transaction_id, so an already-imported one fails with
+          // P2002 and rolls the purchase back with it.
+          await prisma.$transaction(async (tx) => {
+            await tx.plaidTransaction.create({
+              data: { transactionId: t.transaction_id, plaidItemId: item.id },
+            });
+            await tx.entry.create({
+              data: {
+                userId,
+                type: "purchase",
+                label: t.merchant_name ?? t.name,
+                amount: roundCents(t.amount),
+                frequency: "once",
+                sourceKind: "balance",
+                note: "Synced from bank",
+              },
+            });
           });
           summary.transactionsImported++;
         } catch (e: any) {
           if (e?.code !== "P2002") throw e; // already imported — fine, skip
         }
       }
+      // Only advance the cursor once everything it covers is imported, so a
+      // failure partway through gets retried next sync instead of skipped.
+      await prisma.plaidItem.update({ where: { id: item.id }, data: { cursor, status: "active", error: null } });
     } catch {
       // Transactions can be temporarily unavailable right after linking
       // (Plaid is still preparing history) — leave the cursor as-is so the
