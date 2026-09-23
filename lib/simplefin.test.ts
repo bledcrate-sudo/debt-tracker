@@ -7,6 +7,7 @@ import {
   fetchAccountSet,
   guessKind,
   owedFrom,
+  purchaseDate,
   sanitizeMessage,
   SimplefinError,
 } from "./simplefin";
@@ -140,5 +141,33 @@ describe("claimAccessUrl response handling", () => {
     await expect(claimAccessUrl(b64("https://x.org/claim/1"), stubFetch(200, "<html>oops</html>"))).rejects.toThrow(
       /unexpected response/
     );
+  });
+});
+
+describe("purchaseDate", () => {
+  const now = new Date("2026-09-23T15:00:00Z");
+  const epoch = (iso: string) => Date.parse(iso) / 1000;
+  const monthIn = (d: Date, timeZone: string) =>
+    new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit" }).format(d);
+
+  it("keeps a 1st-of-month posting (midnight UTC) in that month in Canada", () => {
+    const d = purchaseDate({ posted: epoch("2026-09-01T00:00:00Z") }, now);
+    expect(d.toISOString()).toBe("2026-09-01T12:00:00.000Z");
+    for (const tz of ["America/Vancouver", "America/Toronto", "America/Halifax", "America/St_Johns"])
+      expect(monthIn(d, tz)).toBe("2026-09");
+  });
+  it("keeps an end-of-month posting in that month", () => {
+    const d = purchaseDate({ posted: epoch("2026-08-31T00:00:00Z") }, now);
+    expect(monthIn(d, "America/Toronto")).toBe("2026-08");
+  });
+  it("prefers when it was transacted over when it posted", () => {
+    const d = purchaseDate({ posted: epoch("2026-09-02T00:00:00Z"), transacted_at: epoch("2026-08-30T00:00:00Z") }, now);
+    expect(d.toISOString()).toBe("2026-08-30T12:00:00.000Z");
+  });
+  it("falls back to now for a missing date and never dates into the future", () => {
+    expect(purchaseDate({ posted: 0 }, now)).toBe(now);
+    expect(purchaseDate({ posted: epoch("2026-09-24T00:00:00Z") }, now)).toBe(now);
+    const early = new Date("2026-09-23T08:00:00Z"); // before today's noon UTC
+    expect(purchaseDate({ posted: epoch("2026-09-23T00:00:00Z") }, early)).toBe(early);
   });
 });

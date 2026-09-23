@@ -13,6 +13,7 @@ export type SimplefinTransactionData = {
   amount: string;
   description: string;
   payee?: string;
+  transacted_at?: number;
   pending?: boolean;
 };
 
@@ -123,6 +124,19 @@ const DEBT_NAME = /credit|visa|master ?card|amex|american express|loan|line of c
 // override the guess in the Bank settings either way.
 export function guessKind(name: string, balance: number): AccountKind {
   return balance < 0 || DEBT_NAME.test(name) ? "debt" : "cash";
+}
+
+// The ledger files a purchase under the month of its createdAt, so imports
+// are back-dated to when the transaction happened (not when it was synced).
+// Bank feeds typically give a calendar date as midnight UTC; pinning to noon
+// UTC of that date keeps it in the same month for any timezone from
+// UTC-11 to UTC+11 (midnight would slip to the previous day in Canada).
+export function purchaseDate(t: Pick<SimplefinTransactionData, "posted" | "transacted_at">, now = new Date()): Date {
+  const ts = t.transacted_at || t.posted;
+  if (!ts || ts <= 0) return now;
+  const d = new Date(ts * 1000);
+  const noon = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12));
+  return noon > now ? now : noon;
 }
 
 // Owed amount for a debt account, whichever sign the institution uses.
@@ -278,6 +292,7 @@ export async function syncSimplefinConnection(
               frequency: "once",
               sourceKind: "balance",
               note: "Synced from bank",
+              createdAt: purchaseDate(t, now),
             },
           });
         });

@@ -217,6 +217,10 @@ export async function syncPlaidItem(plaidItemId: string, userId: string): Promis
                 frequency: "once",
                 sourceKind: "balance",
                 note: "Synced from bank",
+                // File it under the month it happened, not the sync date.
+                // Noon UTC keeps the calendar date in any North American
+                // timezone (midnight would slip to the previous day).
+                createdAt: new Date(`${t.authorized_date ?? t.date}T12:00:00Z`),
               },
             });
           });
