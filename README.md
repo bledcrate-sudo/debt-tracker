@@ -122,7 +122,8 @@ Settings → Bank always still works on demand either way.
   editable per transaction in the feed. A "Fix imported transactions" re-import recomputes it.
 - **Subscriptions** — spots recurring charges (same merchant, ~monthly, similar amount — a small
   price bump still counts) from a year of purchase history and shows each one's amount, cadence,
-  and the total per month, with no setup needed.
+  and the total per month, with no setup needed. "+ Add as Bill" turns one into a real monthly
+  Bill entry (so the budget plans around it) with one tap instead of typing it in by hand.
 - **Auto-sync** — every connected bank refreshes once a day on its own (see below); a manual
   "Sync banks now" is still there for right away.
 - Search and a bank picker on Income, Purchases, and Circulation, as well as the merged feed

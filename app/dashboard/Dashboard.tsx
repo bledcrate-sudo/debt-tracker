@@ -289,6 +289,9 @@ export default function Dashboard({
 
   const income = useMemo(() => entries.filter((e) => e.type === "income"), [entries]);
   const expenses = useMemo(() => entries.filter((e) => e.type === "expense"), [entries]);
+  // So the Subscriptions card can tell which detected charges already have
+  // a matching Bill, and offer "Add as Bill" only for the rest.
+  const billLabels = useMemo(() => new Set(expenses.map((e) => e.label.trim().toLowerCase())), [expenses]);
   const purchases = useMemo(() => entries.filter((e) => e.type === "purchase"), [entries]);
   // Money moving in/out that's neither earned nor spent (e-transfers,
   // refunds, card payments). sourceKind holds the direction: "in" | "out".
@@ -818,7 +821,12 @@ export default function Dashboard({
         onSaved={setBudgetItems}
       />
 
-      <RecurringSection className={phoneShow(phoneTab === "home")} version={feedVersion} />
+      <RecurringSection
+        className={phoneShow(phoneTab === "home")}
+        version={feedVersion}
+        existingBillLabels={billLabels}
+        onAddBill={addEntry}
+      />
 
       {milestone && (
         <section
@@ -1772,10 +1780,38 @@ type RecurringCharge = {
 // Subscriptions and other bills that repeat on their own (Netflix, gym...),
 // spotted from a year of imported purchases — see lib/recurring.ts. Nothing
 // to set up: it just watches for the pattern.
-function RecurringSection({ version, className = "" }: { version: number; className?: string }) {
+function RecurringSection({
+  version,
+  className = "",
+  existingBillLabels,
+  onAddBill,
+}: {
+  version: number;
+  className?: string;
+  // Lower-cased, trimmed labels of Bills that already exist, so a charge
+  // already tracked there doesn't also offer "Add as Bill".
+  existingBillLabels: Set<string>;
+  onAddBill: (payload: { type: "expense"; label: string; amount: number; frequency: "monthly"; note?: string }) => Promise<void>;
+}) {
   const fmt = useContext(CurrencyContext);
   const [charges, setCharges] = useState<RecurringCharge[] | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [adding, setAdding] = useState<string | null>(null);
+
+  async function addAsBill(c: RecurringCharge) {
+    setAdding(c.label);
+    try {
+      await onAddBill({
+        type: "expense",
+        label: c.label,
+        amount: Math.round(c.monthlyAmount * 100) / 100,
+        frequency: "monthly",
+        note: "Added from a detected subscription",
+      });
+    } finally {
+      setAdding(null);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -1801,7 +1837,9 @@ function RecurringSection({ version, className = "" }: { version: number; classN
         <p className="text-sm tabular-nums text-neutral-400">{fmt(total)}/mo detected</p>
       </div>
       <ul className="divide-y divide-neutral-800/70">
-        {visible.map((c) => (
+        {visible.map((c) => {
+          const alreadyBill = existingBillLabels.has(c.label.trim().toLowerCase());
+          return (
           <li key={c.label} className="px-4 md:px-5 py-2.5 flex items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="text-sm font-medium truncate">{c.label}</p>
@@ -1809,10 +1847,22 @@ function RecurringSection({ version, className = "" }: { version: number; classN
                 {cadence(c.avgIntervalDays)} · seen {c.occurrences}× · last{" "}
                 {new Date(c.lastDate).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
               </p>
+              {alreadyBill ? (
+                <span className="text-[11px] uppercase tracking-wider text-neutral-500">✓ Tracked as a Bill</span>
+              ) : (
+                <button
+                  onClick={() => addAsBill(c)}
+                  disabled={adding === c.label}
+                  className="text-[11px] uppercase tracking-wider text-red-400 hover:text-red-300 disabled:opacity-50 font-semibold"
+                >
+                  {adding === c.label ? "Adding…" : "+ Add as Bill"}
+                </button>
+              )}
             </div>
             <span className="shrink-0 tabular-nums text-sm font-semibold text-red-400">{fmt(c.amount)}</span>
           </li>
-        ))}
+          );
+        })}
       </ul>
       {charges.length > LIMIT && (
         <button
