@@ -214,9 +214,27 @@ export async function syncSimplefinConnection(
   let cashSum = 0;
   let sawCash = false;
   const now = new Date();
-  // Gathered across all cash accounts first, so a transfer between two of
-  // them can be recognized before either side is imported.
+  // Gathered across all accounts first, so a transfer between two of them
+  // (chequing -> savings, chequing -> card payment) can be recognized before
+  // either side is imported.
   const cashTxns: BankTxn[] = [];
+  const collect = (acct: SimplefinAccountData, rowId: string, orgName: string | null, cardEntryId: string | null) => {
+    for (const t of acct.transactions ?? []) {
+      // Pending amounts can still change — wait for them to post.
+      if (t.pending) continue;
+      cashTxns.push({
+        key: `${rowId}:${t.id}`,
+        account: rowId,
+        amount: parseFloat(t.amount), // positive = money into the account
+        date: transactionDate(t, now),
+        label: t.payee || t.description,
+        raw: t.description,
+        institution: orgName,
+        accountName: acct.name,
+        cardEntryId,
+      });
+    }
+  };
 
   for (const acct of set.accounts) {
     const balance = parseFloat(acct.balance);
@@ -281,6 +299,9 @@ export async function syncSimplefinConnection(
         where: { id: row.id },
         data: { name: acct.name, orgName, entryId, lastBalance: owed, lastSyncedAt: now },
       });
+      // Card spending shows up as purchases "on card"; payments to the card
+      // pair up with the chequing side as a transfer.
+      collect(acct, row.id, orgName, entryId);
       continue;
     }
 
@@ -292,20 +313,7 @@ export async function syncSimplefinConnection(
       where: { id: row.id },
       data: { name: acct.name, orgName, lastBalance: balance, lastSyncedAt: now },
     });
-    for (const t of acct.transactions ?? []) {
-      // Pending amounts can still change — wait for them to post.
-      if (t.pending) continue;
-      cashTxns.push({
-        key: `${row.id}:${t.id}`,
-        account: row.id,
-        amount: parseFloat(t.amount), // positive = deposit
-        date: transactionDate(t, now),
-        label: t.payee || t.description,
-        raw: t.description,
-        institution: orgName,
-        accountName: acct.name,
-      });
-    }
+    collect(acct, row.id, orgName, null);
   }
 
   const imported = await importBankTransactions({

@@ -197,8 +197,19 @@ export async function syncPlaidItem(plaidItemId: string, userId: string): Promis
 
   if (sawDepository) summary.depositoryBalance = roundCents(depositorySum);
 
+  // Chequing/savings plus credit cards: card spending imports as purchases
+  // "on card", and card payments pair with the chequing side as transfers.
   const depositoryAccountIds = new Set(
-    accounts.filter((a) => a.type === "depository").map((a) => a.account_id)
+    accounts.filter((a) => a.type === "depository" || a.type === "credit").map((a) => a.account_id)
+  );
+  // Each card's debt Entry (set by the account sync above).
+  const cardEntries = new Map(
+    (
+      await prisma.plaidAccount.findMany({
+        where: { plaidItemId: item.id, type: "credit", entryId: { not: null } },
+        select: { accountId: true, entryId: true },
+      })
+    ).map((a) => [a.accountId, a.entryId])
   );
   if (depositoryAccountIds.size > 0) {
     try {
@@ -235,6 +246,7 @@ export async function syncPlaidItem(plaidItemId: string, userId: string): Promis
           label: t.merchant_name ?? t.name,
           raw: t.name,
           hint: plaidHint(t),
+          cardEntryId: cardEntries.get(t.account_id) ?? null,
           institution: item.institutionName,
           accountName: accountNames.get(t.account_id),
         });

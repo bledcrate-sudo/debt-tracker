@@ -100,6 +100,28 @@ describe("classifyTxn", () => {
     expect(c2(-12.5, "TIM HORTONS #121", "Tim Hortons")).toBe("purchase");
   });
 
+  it("counts debit card (Interac) purchases as purchases, not e-transfers", () => {
+    const c2 = (amount: number, raw: string, label = raw) => classifyTxn({ amount, raw, label });
+    // RBC chequing
+    expect(c2(-23.4, "Interac purchase - 3456 SOBEYS #123")).toBe("purchase");
+    expect(c2(-8.75, "Contactless Interac purchase - 1234 TIM HORTONS", "Tim Hortons")).toBe("purchase");
+    expect(c2(-60, "INTERAC RETAIL PURCHASE 000123 COSTCO")).toBe("purchase");
+    expect(c2(-15, "Visa Debit purchase - 5678 AMAZON")).toBe("purchase");
+    expect(c2(-80, "Online Banking payment - 1234 HYDRO")).toBe("purchase");
+    // ...while RBC's e-transfers and transfers still move money around.
+    expect(c2(-50, "e-Transfer sent SAM SMITH")).toBe("circulation");
+    expect(c2(50, "INTERAC e-Transfer - Autodeposit", "Sam Smith")).toBe("circulation");
+    expect(c2(-200, "Online Banking transfer - 1234")).toBe("circulation");
+    expect(c2(40, "Virement Interac de SAM")).toBe("circulation");
+  });
+
+  it("counts card spending as purchases and money onto a card as circulation", () => {
+    const card = (amount: number, label: string) => classifyTxn({ amount, label, cardEntryId: "debt1" });
+    expect(card(-45, "AMAZON.CA")).toBe("purchase");
+    expect(card(400, "PAYMENT - THANK YOU")).toBe("circulation");
+    expect(card(25, "DEPOSIT REFUND")).toBe("circulation");
+  });
+
   it("uses the provider's category when it has one", () => {
     expect(classifyTxn({ amount: 500, label: "MISC", hint: "income" })).toBe("income");
   });

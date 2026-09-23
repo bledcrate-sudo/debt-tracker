@@ -22,12 +22,17 @@ export default async function DashboardPage() {
   const entries = await prisma.entry.findMany({
     where: { userId },
     orderBy: { createdAt: "desc" },
-    include: { payments: true, debtPayments: { orderBy: { paidAt: "desc" } } },
+    include: {
+      payments: true,
+      debtPayments: { orderBy: { paidAt: "desc" } },
+      bankTransactions: { select: { institution: true, account: true }, take: 1 },
+    },
   });
   return (
     <Dashboard
-      initialEntries={entries.map((e) => ({
+      initialEntries={entries.map(({ bankTransactions, ...e }) => ({
         ...e,
+        source: bankTransactions[0] ?? null,
         createdAt: e.createdAt.toISOString(),
         sourceKind: e.sourceKind,
         debtEntryId: e.debtEntryId,

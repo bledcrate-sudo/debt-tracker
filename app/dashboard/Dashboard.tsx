@@ -1330,6 +1330,14 @@ export default function Dashboard({
 
 /* ---------- subcomponents ---------- */
 
+// "RBC Royal Bank · Chequing", or just the account when its name already
+// says the bank ("RBC Day to Day Banking").
+function sourceName(src: { institution: string | null; account: string }) {
+  const bankWord = src.institution?.trim().split(/\s+/)[0]?.toLowerCase();
+  if (!bankWord || src.account.toLowerCase().startsWith(bankWord)) return src.account;
+  return `${src.institution} · ${src.account}`;
+}
+
 function CategoryTable({
   className = "",
   title,
@@ -1370,7 +1378,16 @@ function CategoryTable({
   // Bank sync can put dozens of rows in a month; show the latest few.
   const ROW_LIMIT = 5;
   const [showAll, setShowAll] = useState(false);
-  const shown = showAll ? rows : rows.slice(0, ROW_LIMIT);
+  // Bank picker: with more than one bank's transactions in the list, pick
+  // one to see only its rows (entries added by hand count as "Manual").
+  const bankOf = (e: Entry) => (e.source ? e.source.institution || e.source.account : "Manual");
+  const banks = useMemo(() => Array.from(new Set(rows.filter((e) => e.source).map(bankOf))).sort(), [rows]);
+  const hasManual = rows.some((e) => !e.source);
+  const [bank, setBank] = useState<string | null>(null);
+  const activeBank = bank && (banks.includes(bank) || (bank === "Manual" && hasManual)) ? bank : null;
+  const filtered = activeBank ? rows.filter((e) => bankOf(e) === activeBank) : rows;
+  const shown = showAll ? filtered : filtered.slice(0, ROW_LIMIT);
+  const showPicker = banks.length > 1 || (banks.length === 1 && hasManual);
   const map = {
     red: { bar: "bg-red-500", text: "text-red-400", chip: "bg-red-500/15 border-red-500/30", btn: "bg-gradient-to-b from-red-500 to-red-600 hover:to-red-500 text-neutral-950 shadow-md shadow-red-950/40" },
     rose: { bar: "bg-rose-500", text: "text-rose-400", chip: "bg-rose-500/15 border-rose-500/30", btn: "bg-gradient-to-b from-rose-500 to-rose-600 hover:to-rose-500 text-white shadow-md shadow-rose-950/40" },
@@ -1386,6 +1403,11 @@ function CategoryTable({
           <h3 className="text-lg font-bold">{title}</h3>
           <p className={`text-sm tabular-nums ${map.text} font-semibold`}>{fmt(total)}</p>
           {summary && <p className="text-xs text-neutral-500 tabular-nums">{summary}</p>}
+          {activeBank && (
+            <p className="text-xs text-neutral-400 tabular-nums">
+              {activeBank}: {fmt(filtered.reduce((s, e) => s + (e.type === "circulation" && e.sourceKind === "out" ? -e.amount : e.amount), 0))}
+            </p>
+          )}
         </div>
         {onAdd ? (
           <button onClick={onAdd} className={`px-3 py-1.5 rounded-lg text-sm font-semibold ${map.btn}`}>
@@ -1395,6 +1417,24 @@ function CategoryTable({
           <span className="text-xs text-neutral-500">From your bank</span>
         )}
       </div>
+      {showPicker && (
+        <div className="px-3 sm:px-4 py-2 flex gap-1.5 overflow-x-auto border-b border-neutral-800">
+          {[null, ...banks, ...(hasManual ? ["Manual"] : [])].map((b) => (
+            <button
+              key={b ?? "all"}
+              onClick={() => {
+                setBank(b);
+                setShowAll(false);
+              }}
+              className={`shrink-0 px-2.5 py-1 rounded-full text-xs font-medium border transition ${
+                activeBank === b ? `${map.chip} text-white` : "border-neutral-700 text-neutral-400 hover:text-white"
+              }`}
+            >
+              {b ?? "All banks"}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="overflow-x-auto flex-1">
         <table className="w-full text-sm">
           <thead className="text-neutral-500 text-xs uppercase">
@@ -1485,6 +1525,11 @@ function CategoryTable({
                       </span>
                     )}
                   </p>
+                  {e.source && (
+                    <p className="text-[11px] text-neutral-500 truncate max-w-[40vw] sm:max-w-xs">
+                      {sourceName(e.source)}
+                    </p>
+                  )}
                   {e.note && e.note !== IMPORT_NOTE && (
                     <p className="text-xs text-neutral-500 break-words">{e.note}</p>
                   )}
@@ -1560,12 +1605,12 @@ function CategoryTable({
           </tbody>
         </table>
       </div>
-      {rows.length > ROW_LIMIT && (
+      {filtered.length > ROW_LIMIT && (
         <button
           onClick={() => setShowAll((v) => !v)}
           className="w-full py-2 text-xs text-neutral-400 hover:text-white border-t border-neutral-800"
         >
-          {showAll ? "Show fewer" : `Show all ${rows.length}`}
+          {showAll ? "Show fewer" : `Show all ${filtered.length}`}
         </button>
       )}
     </div>

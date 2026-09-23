@@ -21,6 +21,11 @@ export type BankTxn = {
   // Shown in the merged transactions feed.
   institution?: string | null;
   accountName?: string;
+  // Set for transactions on a credit card / loan: the debt Entry it's
+  // tracked as. Purchases on it are "on card" — spending, but not out of the
+  // cash balance, and not added to the debt again (the card's balance sync
+  // already records what's owed).
+  cardEntryId?: string | null;
 };
 
 // income: pay and deposits. purchase: spending. circulation: money moving
@@ -35,7 +40,11 @@ import { IMPORT_NOTE } from "./constants";
 // Entry types the importers create (debts are created by the account sync).
 export const IMPORTED_TYPES = ["purchase", "income", "circulation"];
 
-const ETRANSFER = /e-?\s?transfer|\be-?tfr\b|interac|auto-?deposit|send money|money request|request money/i;
+// E-transfers and other transfers ("e-Transfer sent", "SEND E-TFR", "Online
+// Banking transfer", Desjardins' "Virement Interac"). Not bare "Interac":
+// debit card purchases say it too ("Interac purchase - 1234 STORE" at RBC,
+// "INTERAC RETAIL PURCHASE"), and those are spending.
+const ETRANSFER = /e-?\s?transfer|\btransfer\b|\be-?tfr\b|\btfr\b|virement|auto-?deposit|send money|money request|request money/i;
 // TD marks Interac e-Transfers with "VFC" (e.g. "VFC1234567 SAM SMITH"),
 // which the rules below would otherwise read as a deposit (income). Matched
 // at any bank: nothing else uses the code, and the bank's name isn't always
@@ -52,11 +61,13 @@ const DEBT_ACCOUNT = /visa|master ?card|\bmc\b|amex|american express|credit card
 
 // Sorts a transaction by its description. Keyword-based, so an odd bank
 // description can land in the wrong section.
-export function classifyTxn(t: Pick<BankTxn, "amount" | "label" | "raw" | "hint">): TxnKind {
+export function classifyTxn(t: Pick<BankTxn, "amount" | "label" | "raw" | "hint" | "cardEntryId">): TxnKind {
   // Both the payee and the bank's description, so neither hides the other.
   const label = textOf(t);
   // Checked before the provider's own category: these are e-transfers.
   if (VFC_ETRANSFER.test(label)) return "circulation";
+  // Money arriving on a card is a payment or refund, never pay.
+  if (t.cardEntryId && t.amount > 0) return "circulation";
   if (t.hint) return t.hint;
   if (ETRANSFER.test(label)) return "circulation";
   if (t.amount > 0) return PAY_IN.test(label) && !NOT_PAY.test(label) ? "income" : "circulation";
@@ -163,9 +174,21 @@ export async function importBankTransactions(opts: {
             label: ((isVfcEtransfer(t) ? t.raw : null) || t.label || t.raw || "Bank transaction").slice(0, 120),
             amount: roundCents(Math.abs(t.amount)),
             frequency: "once",
-            // Purchases: paid from balance. Circulation: which way it moved
-            // (amounts are stored positive).
-            sourceKind: kind === "purchase" ? "balance" : kind === "circulation" ? (t.amount > 0 ? "in" : "out") : null,
+            // Purchases: paid from balance, or on the card they were made
+            // with. Circulation: which way it moved (amounts are stored
+            // positive). No charge is raised on the card's debt for an
+            // on-card purchase: its balance sync already counts it.
+            sourceKind:
+              kind === "purchase"
+                ? t.cardEntryId
+                  ? "debt"
+                  : "balance"
+                : kind === "circulation"
+                ? t.amount > 0
+                  ? "in"
+                  : "out"
+                : null,
+            debtEntryId: kind === "purchase" && t.cardEntryId ? t.cardEntryId : null,
             note: IMPORT_NOTE,
             createdAt: t.date,
           },

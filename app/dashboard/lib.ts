@@ -23,6 +23,8 @@ export type Entry = {
   originalAmount?: number;
   paidSoFar?: number;
   chargedSoFar?: number;
+  // Bank and account an imported entry came from (null for manual entries).
+  source?: { institution: string | null; account: string } | null;
 };
 
 export type Formatter = (n: number) => string;

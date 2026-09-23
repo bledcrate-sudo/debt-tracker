@@ -25,9 +25,16 @@ export async function GET() {
   const entries = await prisma.entry.findMany({
     where: { userId },
     orderBy: { createdAt: "desc" },
-    include: { payments: true, debtPayments: true },
+    include: {
+      payments: true,
+      debtPayments: true,
+      // Which bank/account an imported entry came from.
+      bankTransactions: { select: { institution: true, account: true }, take: 1 },
+    },
   });
-  return NextResponse.json(entries);
+  return NextResponse.json(
+    entries.map(({ bankTransactions, ...e }) => ({ ...e, source: bankTransactions[0] ?? null }))
+  );
 }
 
 export async function POST(req: Request) {

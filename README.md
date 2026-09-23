@@ -59,8 +59,11 @@ With any chequing/savings account connected, **Balance is the real total in thos
 (as of their last sync), not a figure computed from entries; past months are worked backwards
 from it through the recorded flows. Without a bank connected, Balance is computed as before.
 
-Both providers import chequing/savings transactions dated when they happened, sorted by
-description (Plaid's own categories when available):
+Both providers import chequing/savings and credit card transactions dated when they happened,
+sorted by description (Plaid's own categories when available). Card spending shows as purchases
+"On card" (not taken out of Balance, and not added to the card's debt twice — its balance sync
+already counts it). Debit card purchases ("Interac purchase - …") are purchases; only
+e-transfers and transfers are Circulation. Pending transactions wait until they post.
 
 - **Income** — payroll and deposits
 - **Purchases** — spending
@@ -109,7 +112,8 @@ the last one are skipped. The Access URL is stored encrypted with `PLAID_TOKEN_E
 - Edit or delete any entry; per-user data isolation enforced at the API layer
 - Optional bank sync via Plaid and/or SimpleFIN: link multiple banks, auto-sync credit card/loan
   balances, use the real account total as Balance, and sort transactions into Income,
-  Purchases and Circulation
+  Purchases and Circulation — each row shows the bank account it came from, and the Income,
+  Purchases and Circulation lists have a bank picker when more than one bank is connected
 
 ## Testing
 
