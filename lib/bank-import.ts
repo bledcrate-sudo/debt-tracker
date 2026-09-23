@@ -9,7 +9,12 @@ export type BankTxn = {
   account: string; // which of the user's accounts it's on
   amount: number;
   date: Date;
+  // Display name (a provider's cleaned-up payee when it has one).
   label: string;
+  // The bank's own description. Rules match it too: the payee can hide the
+  // words that matter (TD's "VFC..." e-transfers come through SimpleFIN with
+  // a payee like "ATM Deposit"; pay can come as just the employer's name).
+  raw?: string;
   // Provider's own categorization when it has one (Plaid does), which beats
   // guessing from the description.
   hint?: TxnKind;
@@ -31,10 +36,14 @@ import { IMPORT_NOTE } from "./constants";
 export const IMPORTED_TYPES = ["purchase", "income", "circulation"];
 
 const ETRANSFER = /e-?\s?transfer|\be-?tfr\b|interac|auto-?deposit|send money|money request|request money/i;
-// TD describes Interac e-Transfers with a "VFC..." prefix, which the rules
-// below would otherwise take for a deposit (income).
-const TD_ETRANSFER = /^\s*vfc/i;
-const TD = /^td\b|\btd (bank|canada)|toronto[- ]dominion/i;
+// TD marks Interac e-Transfers with "VFC" (e.g. "VFC1234567 SAM SMITH"),
+// which the rules below would otherwise read as a deposit (income). Matched
+// at any bank: nothing else uses the code, and the bank's name isn't always
+// reported the same way ("TD Canada Trust", "td.com"...).
+const VFC_ETRANSFER = /\bvfc/i;
+
+const textOf = (t: Pick<BankTxn, "label" | "raw">) => [t.raw, t.label].filter(Boolean).join(" ");
+export const isVfcEtransfer = (t: Pick<BankTxn, "label" | "raw">) => VFC_ETRANSFER.test(textOf(t));
 const PAY_IN = /payroll|salary|wages|pay\s?(cheque|check)|direct dep|dir dep|\bdeposit\b|\bdep\b|\bpay\b/i;
 // "PAY"/"DEPOSIT" also appear in refunds and wallet payments — not pay.
 const NOT_PAY = /apple pay|google pay|samsung pay|paypal|refund|reversal|return/i;
@@ -43,11 +52,11 @@ const DEBT_ACCOUNT = /visa|master ?card|\bmc\b|amex|american express|credit card
 
 // Sorts a transaction by its description. Keyword-based, so an odd bank
 // description can land in the wrong section.
-export function classifyTxn(t: Pick<BankTxn, "amount" | "label" | "hint" | "institution">): TxnKind {
-  const label = t.label ?? "";
-  // Checked before the provider's category: at TD these are e-transfers.
-  // Applied when the bank is unknown too; other banks keep the usual rules.
-  if (TD_ETRANSFER.test(label) && (!t.institution || TD.test(t.institution))) return "circulation";
+export function classifyTxn(t: Pick<BankTxn, "amount" | "label" | "raw" | "hint">): TxnKind {
+  // Both the payee and the bank's description, so neither hides the other.
+  const label = textOf(t);
+  // Checked before the provider's own category: these are e-transfers.
+  if (VFC_ETRANSFER.test(label)) return "circulation";
   if (t.hint) return t.hint;
   if (ETRANSFER.test(label)) return "circulation";
   if (t.amount > 0) return PAY_IN.test(label) && !NOT_PAY.test(label) ? "income" : "circulation";
@@ -111,7 +120,7 @@ export async function importBankTransactions(opts: {
     account: t.accountName || "Account",
     date: t.date,
     amount: roundCents(t.amount),
-    description: (t.label || "Bank transaction").slice(0, 200),
+    description: (t.raw || t.label || "Bank transaction").slice(0, 200),
     kind,
     entryId,
   });
@@ -150,7 +159,8 @@ export async function importBankTransactions(opts: {
           data: {
             userId: opts.userId,
             type: kind,
-            label: (t.label || "Bank transaction").slice(0, 120),
+            // A VFC e-transfer's payee is wrong ("ATM Deposit"); show the bank's text.
+            label: ((isVfcEtransfer(t) ? t.raw : null) || t.label || t.raw || "Bank transaction").slice(0, 120),
             amount: roundCents(Math.abs(t.amount)),
             frequency: "once",
             // Purchases: paid from balance. Circulation: which way it moved

@@ -301,6 +301,7 @@ export async function syncSimplefinConnection(
         amount: parseFloat(t.amount), // positive = deposit
         date: transactionDate(t, now),
         label: t.payee || t.description,
+        raw: t.description,
         institution: orgName,
         accountName: acct.name,
       });

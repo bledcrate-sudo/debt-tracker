@@ -233,6 +233,7 @@ export async function syncPlaidItem(plaidItemId: string, userId: string): Promis
           amount: -t.amount, // Plaid: positive = money out
           date: date > new Date() ? new Date() : date,
           label: t.merchant_name ?? t.name,
+          raw: t.name,
           hint: plaidHint(t),
           institution: item.institutionName,
           accountName: accountNames.get(t.account_id),

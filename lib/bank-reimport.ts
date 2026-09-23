@@ -12,8 +12,15 @@ import { syncPlaidItem } from "./plaid-sync";
 // transactions back.
 export async function reimportBankTransactions(userId: string, opts: { fetchImpl?: typeof fetch } = {}) {
   const [removed] = await prisma.$transaction([
+    // Everything the importers created: tagged with the import note, or
+    // linked to a bank transaction (still caught if its note was edited).
+    // Runs before the feed rows below are deleted, so the link still exists.
     prisma.entry.deleteMany({
-      where: { userId, note: IMPORT_NOTE, type: { in: IMPORTED_TYPES } },
+      where: {
+        userId,
+        type: { in: IMPORTED_TYPES },
+        OR: [{ note: IMPORT_NOTE }, { bankTransactions: { some: {} } }],
+      },
     }),
     prisma.simplefinTransaction.deleteMany({ where: { connection: { userId } } }),
     prisma.bankTransaction.deleteMany({ where: { userId } }),

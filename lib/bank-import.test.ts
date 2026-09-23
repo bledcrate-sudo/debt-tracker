@@ -79,19 +79,25 @@ describe("classifyTxn", () => {
     expect(c(-9.99, "NETFLIX.COM")).toBe("purchase");
   });
 
-  it("treats TD's VFC-prefixed transactions as e-transfers (circulation), not income", () => {
-    const td = (amount: number, label: string, institution: string | null = "TD Canada Trust", hint?: "income") =>
-      classifyTxn({ amount, label, institution, hint });
-    expect(td(250, "VFC1234567 DEPOSIT")).toBe("circulation");
-    expect(td(250, "vfc SAM SMITH")).toBe("circulation");
-    expect(td(-80, "VFC SEND ALEX")).toBe("circulation");
-    expect(td(250, "VFC1234567", "TD Bank")).toBe("circulation");
-    expect(td(250, "VFC1234567", "The Toronto-Dominion Bank")).toBe("circulation");
-    expect(td(250, "VFC1234567", null)).toBe("circulation"); // bank unknown
-    expect(td(250, "VFC1234567", "TD Canada Trust", "income")).toBe("circulation"); // beats Plaid's category
-    // Only at the start, and only for TD.
-    expect(td(2100, "PAYROLL DEPOSIT VFC CORP")).toBe("income");
-    expect(td(2100, "VFC PAYROLL", "EQ Bank")).toBe("income");
+  it("treats VFC transactions as e-transfers (Moves), not income or an ATM deposit", () => {
+    const c2 = (amount: number, raw: string, label = raw, hint?: "income") => classifyTxn({ amount, raw, label, hint });
+    // SimpleFIN's payee says "ATM Deposit"; only the bank's description has VFC.
+    expect(c2(250, "VFC1234567 SAM SMITH", "ATM Deposit")).toBe("circulation");
+    expect(c2(250, "vfc sam smith")).toBe("circulation");
+    expect(c2(-80, "VFC SEND ALEX")).toBe("circulation");
+    expect(c2(250, "DEPOSIT VFC1234567")).toBe("circulation"); // not only at the start
+    expect(c2(250, "VFC1234567", "Deposit", "income")).toBe("circulation"); // beats Plaid's category
+  });
+
+  it("reads the bank's description as well as the payee", () => {
+    const c2 = (amount: number, raw: string, label: string) => classifyTxn({ amount, raw, label });
+    // Pay whose payee is just the employer's name.
+    expect(c2(2100, "PAYROLL DEPOSIT", "ACME CORP")).toBe("income");
+    // An e-transfer whose payee is just the sender.
+    expect(c2(60, "INTERAC E-TRANSFER", "Sam Smith")).toBe("circulation");
+    // A card payment whose payee is just the bank.
+    expect(c2(-200, "PAYMENT - VISA", "TD")).toBe("circulation");
+    expect(c2(-12.5, "TIM HORTONS #121", "Tim Hortons")).toBe("purchase");
   });
 
   it("uses the provider's category when it has one", () => {
