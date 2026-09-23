@@ -7,14 +7,22 @@ export const maxDuration = 300;
 
 // Refreshes every connected bank for every user once a day, so Balance and
 // the transactions feed are current without anyone opening the app first —
-// see vercel.json for the schedule. Vercel signs cron requests with
-// CRON_SECRET as a bearer token when that env var is set; require it in
-// production so the endpoint can't be triggered by anyone else.
+// see vercel.json for the schedule.
+//
+// Authorization: every request Vercel's own scheduler sends carries
+// "user-agent: vercel-cron/1.0" — this is Vercel's documented way to tell a
+// cron-triggered request apart from an outside one when a manually-set
+// secret isn't in play (https://vercel.com/docs/cron-jobs/manage-cron-jobs
+// — "Securing cron jobs"). CRON_SECRET is supported too, for anyone who
+// wants the stronger check and can get the env var saved (Vercel's
+// dashboard validates it strictly as an HTTP header value, which trips up
+// some browsers' paste handling) — but it's optional, not required.
 export async function GET(req: Request) {
   if (process.env.NODE_ENV === "production") {
     const auth = req.headers.get("authorization");
-    if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`)
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const isVercelCron = (req.headers.get("user-agent") ?? "").startsWith("vercel-cron/");
+    const hasValidSecret = !!process.env.CRON_SECRET && auth === `Bearer ${process.env.CRON_SECRET}`;
+    if (!isVercelCron && !hasValidSecret) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const [items, conns] = await Promise.all([

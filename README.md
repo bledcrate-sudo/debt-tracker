@@ -83,10 +83,10 @@ the last one are skipped. The Access URL is stored encrypted with `PLAID_TOKEN_E
 
 A daily cron job (`vercel.json` → `/api/cron/sync`) refreshes every connected bank on its own, so
 Balance and the transactions feed stay current without opening the app first (SimpleFIN's own
-cooldown still limits it to about once a day either way). Set `CRON_SECRET` in your environment —
-Vercel sends it back as a bearer token automatically, nothing else to configure. Without it the
-route is only reachable outside production (e.g. local dev); "Sync banks now" always still works
-on demand.
+cooldown still limits it to about once a day either way). Nothing to configure — deploying this
+project to Vercel turns it on automatically, since the route trusts Vercel's own cron request
+header. Setting `CRON_SECRET` adds a stronger check on top, but it's optional. "Sync banks now" in
+Settings → Bank always still works on demand either way.
 
 ## Stack
 
