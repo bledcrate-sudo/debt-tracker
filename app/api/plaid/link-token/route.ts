@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { plaidClient, PLAID_PRODUCTS, PLAID_OPTIONAL_PRODUCTS, PLAID_COUNTRY_CODES } from "@/lib/plaid";
+import { plaidClient, PLAID_PRODUCTS, PLAID_OPTIONAL_PRODUCTS, PLAID_COUNTRY_CODES, plaidAccessError } from "@/lib/plaid";
 import { currentUserId } from "@/lib/session";
 
 // Creates a fresh Link token for the "connect a bank" button. No item_id is
@@ -8,6 +8,8 @@ import { currentUserId } from "@/lib/session";
 export async function POST() {
   const userId = await currentUserId();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const denied = await plaidAccessError(userId);
+  if (denied) return NextResponse.json({ error: denied }, { status: 403 });
 
   try {
     const res = await plaidClient.linkTokenCreate({

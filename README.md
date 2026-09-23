@@ -36,7 +36,9 @@ only some banks — especially in Canada — support it. Any bank with transacti
 Liabilities isn't available, cards and loans still sync their balance and you fill in the rest.
 
 Sandbox is free and unlimited. Moving to real accounts needs Plaid's Trial plan (also free, up to
-10 linked accounts) — just swap `PLAID_ENV` to `production` and use your production `secret`.
+10 linked accounts) — swap `PLAID_ENV` to `production`, use your production `secret`, and set
+`PLAID_ALLOWED_EMAILS` to your login email. Live mode refuses to link banks without it: sign-up is
+open, and every Item a stranger linked would count permanently against the 10-Item cap.
 
 ## Stack
 

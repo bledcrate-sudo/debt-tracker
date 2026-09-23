@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { plaidClient } from "@/lib/plaid";
+import { plaidClient, plaidAccessError } from "@/lib/plaid";
 import { prisma } from "@/lib/prisma";
 import { currentUserId } from "@/lib/session";
 import { encryptToken } from "@/lib/plaid-crypto";
@@ -17,6 +17,8 @@ const schema = z.object({
 export async function POST(req: Request) {
   const userId = await currentUserId();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const denied = await plaidAccessError(userId);
+  if (denied) return NextResponse.json({ error: denied }, { status: 403 });
 
   try {
     const { publicToken, institutionId, institutionName } = schema.parse(await req.json());
