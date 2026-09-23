@@ -3,12 +3,15 @@ import { plaidClient } from "./plaid";
 import { prisma } from "./prisma";
 import { decryptToken } from "./plaid-crypto";
 import { roundCents } from "./money";
+import { importBankTransactions, type BankTxn } from "./bank-import";
 
 export type SyncSummary = {
   accountsSeen: number;
   debtsCreated: number;
   debtsUpdated: number;
   transactionsImported: number;
+  incomesImported: number;
+  transfersSkipped: number;
   // Sum of current depository (checking/savings) balances this sync saw,
   // null if the item has no depository accounts. Surfaced to the user to
   // apply manually — see the note on why this isn't written automatically.
@@ -26,8 +29,9 @@ const TRANSACTION_LOOKBACK_DAYS = 30;
 //     for the delta, so payoff history recorded in the app stays intact.
 //   - depository accounts don't get an Entry of their own (this app tracks
 //     one running cash balance, not per-account); their balance is returned
-//     for the caller to display, and their non-pending spend transactions
-//     import as one-off purchases, deduped by Plaid's transaction_id.
+//     for the caller to display, and their posted transactions import as
+//     one-off purchases (money out) or income (money in), skipping transfers
+//     between the user's own accounts — see lib/bank-import.ts.
 export async function syncPlaidItem(plaidItemId: string, userId: string): Promise<SyncSummary> {
   const item = await prisma.plaidItem.findUnique({
     where: { id: plaidItemId },
@@ -41,6 +45,8 @@ export async function syncPlaidItem(plaidItemId: string, userId: string): Promis
     debtsCreated: 0,
     debtsUpdated: 0,
     transactionsImported: 0,
+    incomesImported: 0,
+    transfersSkipped: 0,
     depositoryBalance: null,
   };
 
@@ -193,42 +199,46 @@ export async function syncPlaidItem(plaidItemId: string, userId: string): Promis
         hasMore = res.data.has_more;
       }
 
-      const cutoff = new Date();
-      cutoff.setDate(cutoff.getDate() - TRANSACTION_LOOKBACK_DAYS);
+      // Import from a month before the bank was linked: on a first sync
+      // that's the last 30 days, and after a re-import reset (cursor
+      // cleared) it recovers everything the original imports covered.
+      const cutoff = new Date(
+        Math.min(Date.now(), item.createdAt.getTime()) - TRANSACTION_LOOKBACK_DAYS * 86400_000
+      );
+      const txns: BankTxn[] = [];
       for (const t of added) {
-        // Plaid: positive amount = money out. Skip pending (amount can still
-        // change), deposits/refunds, other accounts, and old history.
-        if (t.pending || t.amount <= 0 || !depositoryAccountIds.has(t.account_id)) continue;
-        if (new Date(t.date) < cutoff) continue;
-        try {
-          // The PlaidTransaction insert is the dedupe guard: its primary key
-          // is the transaction_id, so an already-imported one fails with
-          // P2002 and rolls the purchase back with it.
-          await prisma.$transaction(async (tx) => {
-            await tx.plaidTransaction.create({
-              data: { transactionId: t.transaction_id, plaidItemId: item.id },
-            });
-            await tx.entry.create({
-              data: {
-                userId,
-                type: "purchase",
-                label: t.merchant_name ?? t.name,
-                amount: roundCents(t.amount),
-                frequency: "once",
-                sourceKind: "balance",
-                note: "Synced from bank",
-                // File it under the month it happened, not the sync date.
-                // Noon UTC keeps the calendar date in any North American
-                // timezone (midnight would slip to the previous day).
-                createdAt: new Date(`${t.authorized_date ?? t.date}T12:00:00Z`),
-              },
-            });
-          });
-          summary.transactionsImported++;
-        } catch (e: any) {
-          if (e?.code !== "P2002") throw e; // already imported — fine, skip
-        }
+        // Skip pending (amount can still change), other accounts, old history.
+        if (t.pending || !depositoryAccountIds.has(t.account_id)) continue;
+        // File it under the day it happened. Noon UTC keeps the calendar
+        // date in any North American timezone (midnight would slip back).
+        const date = new Date(`${t.authorized_date ?? t.date}T12:00:00Z`);
+        if (date < cutoff) continue;
+        txns.push({
+          key: t.transaction_id,
+          account: t.account_id,
+          amount: -t.amount, // Plaid: positive = money out
+          date: date > new Date() ? new Date() : date,
+          label: t.merchant_name ?? t.name,
+        });
       }
+      const imported = await importBankTransactions({
+        userId,
+        txns,
+        alreadyImported: async (keys) =>
+          new Set(
+            (
+              await prisma.plaidTransaction.findMany({
+                where: { transactionId: { in: keys } },
+                select: { transactionId: true },
+              })
+            ).map((r) => r.transactionId)
+          ),
+        markImported: (tx, key) =>
+          tx.plaidTransaction.create({ data: { transactionId: key, plaidItemId: item.id } }),
+      });
+      summary.transactionsImported = imported.purchases;
+      summary.incomesImported = imported.incomes;
+      summary.transfersSkipped = imported.transfers;
       // Only advance the cursor once everything it covers is imported, so a
       // failure partway through gets retried next sync instead of skipped.
       await prisma.plaidItem.update({ where: { id: item.id }, data: { cursor, status: "active", error: null } });

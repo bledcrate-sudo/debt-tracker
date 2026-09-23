@@ -53,7 +53,14 @@ US and Canada) works alongside it — no developer account needed:
    the Bank tab.
 
 Debt accounts sync their balance (APR, minimum payment and due date aren't provided — enter them
-once). Cash accounts import spending as purchases and count toward the bank balance you can apply.
+once). Cash accounts count toward the bank balance you can apply.
+
+Both providers import chequing/savings transactions dated when they happened: money out as
+one-off purchases, money in (pay, e-transfers, refunds) as one-off income. Transfers between your
+own accounts — the same amount out of one and into another within 3 days — are skipped on both
+sides. If you also track your pay as a manual income entry, remove it or it's counted twice.
+Settings → Bank → "Fix imported transactions" deletes everything the importers created and
+re-imports it (debts are left alone).
 SimpleFIN refreshes about once a day and allows ~24 requests a day, so syncs within 10 minutes of
 the last one are skipped. The Access URL is stored encrypted with `PLAID_TOKEN_ENCRYPTION_KEY`.
 
@@ -76,7 +83,7 @@ the last one are skipped. The Access URL is stored encrypted with `PLAID_TOKEN_E
 - Per-account currency setting
 - Edit or delete any entry; per-user data isolation enforced at the API layer
 - Optional bank sync via Plaid and/or SimpleFIN: link multiple banks, auto-sync credit card/loan
-  balances, import recent chequing-account spending
+  balances, import recent chequing/savings spending and deposits
 
 ## Testing
 

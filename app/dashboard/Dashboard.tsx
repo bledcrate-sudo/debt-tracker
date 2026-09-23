@@ -2063,6 +2063,8 @@ function BankTab({
     if (r.ok) setItems(await r.json());
   }
   const [sfConns, setSfConns] = useState<SimplefinConnRow[] | null>(null);
+  const [reimportBusy, setReimportBusy] = useState(false);
+  const [reimportNotice, setReimportNotice] = useState<string | null>(null);
   async function loadSimplefin() {
     const r = await fetch("/api/simplefin/connections");
     if (r.ok) setSfConns(await r.json());
@@ -2138,6 +2140,34 @@ function BankTab({
     setSyncingId(null);
     if (!r.ok) return setError("Failed to unlink");
     await loadItems();
+    onChanged();
+  }
+
+  async function reimport() {
+    if (
+      !confirm(
+        "Re-import bank transactions?\n\nThis deletes every purchase and income imported from your banks and imports them again, each dated when it happened. Edits you made to imported entries are lost, and imported entries you deleted come back. Your debts aren't affected."
+      )
+    )
+      return;
+    setReimportBusy(true);
+    setError(null);
+    setReimportNotice(null);
+    const r = await fetch("/api/bank/reimport", { method: "POST" });
+    setReimportBusy(false);
+    const body = await r.json().catch(() => null);
+    if (!r.ok) return setError(body?.error ?? "Re-import failed");
+    const parts = [
+      `Removed ${body.removed}`,
+      `re-imported ${body.purchases} purchase${body.purchases === 1 ? "" : "s"} and ${body.incomes} deposit${body.incomes === 1 ? "" : "s"}`,
+    ];
+    if (body.transfers) parts.push(`skipped ${body.transfers} transfer${body.transfers === 1 ? "" : "s"} between your accounts`);
+    setReimportNotice(
+      parts.join(", ") +
+        "." +
+        (body.errors?.length ? ` Some banks didn't respond (${body.errors.join("; ")}) — their transactions come back on the next sync.` : "")
+    );
+    await Promise.all([loadItems(), loadSimplefin()]);
     onChanged();
   }
 
@@ -2237,6 +2267,24 @@ function BankTab({
         onChanged={onChanged}
         onError={setError}
       />
+
+      {((items?.length ?? 0) > 0 || (sfConns?.length ?? 0) > 0) && (
+        <div className="border-t border-neutral-800 pt-4 space-y-2">
+          <p className="text-xs text-neutral-500">
+            Spending imports as purchases and deposits (pay, e-transfers) as income, each in the month it
+            happened. Transfers between your own accounts are skipped. If you also log your pay by hand,
+            remove that entry so it isn't counted twice.
+          </p>
+          {reimportNotice && <p className="text-sm text-neutral-300">{reimportNotice}</p>}
+          <button
+            onClick={reimport}
+            disabled={reimportBusy}
+            className="w-full py-2.5 rounded-xl border border-neutral-700 text-sm text-neutral-300 hover:bg-neutral-800 disabled:opacity-50"
+          >
+            {reimportBusy ? "Re-importing…" : "Fix imported transactions (re-import)"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
