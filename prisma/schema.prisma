@@ -241,6 +241,10 @@ model BankTransaction {
   amount      Float // > 0 money in, < 0 money out
   description String
   kind        String // "income" | "purchase" | "circulation" | "transfer"
+  // Spending category, guessed at import time from the description
+  // (see lib/categorize.ts) and editable per transaction. Null for
+  // income/circulation/transfer rows and for purchases nothing matched.
+  category    String?
   entryId     String?
   entry       Entry?   @relation(fields: [entryId], references: [id], onDelete: SetNull)
   createdAt   DateTime @default(now())

@@ -34,6 +34,7 @@ import {
   type BudgetPlan,
 } from "./lib";
 import { IMPORT_NOTE } from "@/lib/constants";
+import { CATEGORIES, type Category } from "@/lib/categorize";
 
 // Provided by Dashboard so every subcomponent formats in the signed-in user's
 // currency without threading a prop through each one; the default here only
@@ -817,6 +818,8 @@ export default function Dashboard({
         onSaved={setBudgetItems}
       />
 
+      <RecurringSection className={phoneShow(phoneTab === "home")} version={feedVersion} />
+
       {milestone && (
         <section
           className={`rounded-2xl border p-4 flex items-center gap-4 ${phoneShow(phoneTab === "debt", "flex")} ${
@@ -1385,9 +1388,13 @@ function CategoryTable({
   const hasManual = rows.some((e) => !e.source);
   const [bank, setBank] = useState<string | null>(null);
   const activeBank = bank && (banks.includes(bank) || (bank === "Manual" && hasManual)) ? bank : null;
-  const filtered = activeBank ? rows.filter((e) => bankOf(e) === activeBank) : rows;
+  const [search, setSearch] = useState("");
+  const q = search.trim().toLowerCase();
+  const byBank = activeBank ? rows.filter((e) => bankOf(e) === activeBank) : rows;
+  const filtered = q ? byBank.filter((e) => e.label.toLowerCase().includes(q) || bankOf(e).toLowerCase().includes(q)) : byBank;
   const shown = showAll ? filtered : filtered.slice(0, ROW_LIMIT);
   const showPicker = banks.length > 1 || (banks.length === 1 && hasManual);
+  const showSearch = rows.length > ROW_LIMIT;
   const map = {
     red: { bar: "bg-red-500", text: "text-red-400", chip: "bg-red-500/15 border-red-500/30", btn: "bg-gradient-to-b from-red-500 to-red-600 hover:to-red-500 text-neutral-950 shadow-md shadow-red-950/40" },
     rose: { bar: "bg-rose-500", text: "text-rose-400", chip: "bg-rose-500/15 border-rose-500/30", btn: "bg-gradient-to-b from-rose-500 to-rose-600 hover:to-rose-500 text-white shadow-md shadow-rose-950/40" },
@@ -1417,6 +1424,20 @@ function CategoryTable({
           <span className="text-xs text-neutral-500">From your bank</span>
         )}
       </div>
+      {showSearch && (
+        <div className="px-3 sm:px-4 pt-2">
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setShowAll(false);
+            }}
+            placeholder="Search…"
+            className="w-full px-3 py-1.5 rounded-lg bg-neutral-800/60 border border-neutral-700 text-sm placeholder:text-neutral-500 focus:outline-none focus:border-neutral-500"
+          />
+        </div>
+      )}
       {showPicker && (
         <div className="px-3 sm:px-4 py-2 flex gap-1.5 overflow-x-auto border-b border-neutral-800">
           {[null, ...banks, ...(hasManual ? ["Manual"] : [])].map((b) => (
@@ -1451,6 +1472,13 @@ function CategoryTable({
               <tr>
                 <td colSpan={(showShare ? 4 : 3) + (onTogglePaid ? 1 : 0)} className="text-center py-8 text-neutral-500 italic">
                   {onAdd ? "Empty — click + Add" : "Nothing this month"}
+                </td>
+              </tr>
+            )}
+            {rows.length > 0 && filtered.length === 0 && (
+              <tr>
+                <td colSpan={(showShare ? 4 : 3) + (onTogglePaid ? 1 : 0)} className="text-center py-8 text-neutral-500 italic">
+                  No matches
                 </td>
               </tr>
             )}
@@ -1722,6 +1750,7 @@ type FeedRow = {
   amount: number;
   description: string;
   kind: "income" | "purchase" | "circulation" | "transfer";
+  category: Category | null;
 };
 
 const KIND_LABEL: Record<FeedRow["kind"], string> = {
@@ -1731,6 +1760,72 @@ const KIND_LABEL: Record<FeedRow["kind"], string> = {
   transfer: "Transfer",
 };
 
+type RecurringCharge = {
+  label: string;
+  amount: number;
+  occurrences: number;
+  lastDate: string;
+  avgIntervalDays: number;
+  monthlyAmount: number;
+};
+
+// Subscriptions and other bills that repeat on their own (Netflix, gym...),
+// spotted from a year of imported purchases — see lib/recurring.ts. Nothing
+// to set up: it just watches for the pattern.
+function RecurringSection({ version, className = "" }: { version: number; className?: string }) {
+  const fmt = useContext(CurrencyContext);
+  const [charges, setCharges] = useState<RecurringCharge[] | null>(null);
+  const [showAll, setShowAll] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/bank/recurring")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => !cancelled && setCharges(data))
+      .catch(() => !cancelled && setCharges([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [version]);
+
+  if (!charges || charges.length === 0) return null;
+  const total = charges.reduce((s, c) => s + c.monthlyAmount, 0);
+  const LIMIT = 5;
+  const visible = showAll ? charges : charges.slice(0, LIMIT);
+  const cadence = (days: number) => (days <= 35 ? "Monthly" : days <= 100 ? "Quarterly" : `Every ~${Math.round(days / 30)} months`);
+
+  return (
+    <section className={`bg-neutral-900/60 border border-neutral-800 rounded-2xl overflow-hidden ${className}`}>
+      <div className="px-4 md:px-5 py-3 border-b border-neutral-800">
+        <h2 className="text-lg font-bold">Subscriptions</h2>
+        <p className="text-sm tabular-nums text-neutral-400">{fmt(total)}/mo detected</p>
+      </div>
+      <ul className="divide-y divide-neutral-800/70">
+        {visible.map((c) => (
+          <li key={c.label} className="px-4 md:px-5 py-2.5 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium truncate">{c.label}</p>
+              <p className="text-xs text-neutral-500">
+                {cadence(c.avgIntervalDays)} · seen {c.occurrences}× · last{" "}
+                {new Date(c.lastDate).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+              </p>
+            </div>
+            <span className="shrink-0 tabular-nums text-sm font-semibold text-red-400">{fmt(c.amount)}</span>
+          </li>
+        ))}
+      </ul>
+      {charges.length > LIMIT && (
+        <button
+          onClick={() => setShowAll((v) => !v)}
+          className="w-full py-2 text-xs text-neutral-400 hover:text-white border-t border-neutral-800"
+        >
+          {showAll ? "Show fewer" : `Show all ${charges.length}`}
+        </button>
+      )}
+    </section>
+  );
+}
+
 // Every transaction from every connected bank, merged into one list like a
 // banking app's, tagged with the bank/account it came from and its section.
 function TransactionsFeed({ month, version, className = "" }: { month: string; version: number; className?: string }) {
@@ -1738,6 +1833,7 @@ function TransactionsFeed({ month, version, className = "" }: { month: string; v
   const [rows, setRows] = useState<FeedRow[] | null>(null);
   const [bank, setBank] = useState<string>("all");
   const [showAll, setShowAll] = useState(false);
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -1753,7 +1849,22 @@ function TransactionsFeed({ month, version, className = "" }: { month: string; v
 
   const bankOf = (r: FeedRow) => r.institution || r.account;
   const banks = useMemo(() => [...new Set((rows ?? []).map(bankOf))], [rows]);
-  const shown = (rows ?? []).filter((r) => bank === "all" || bankOf(r) === bank);
+  const q = search.trim().toLowerCase();
+  const shown = (rows ?? []).filter(
+    (r) =>
+      (bank === "all" || bankOf(r) === bank) &&
+      (!q || r.description.toLowerCase().includes(q) || bankOf(r).toLowerCase().includes(q))
+  );
+
+  async function setCategory(id: string, category: Category) {
+    setRows((cur) => cur && cur.map((r) => (r.id === id ? { ...r, category } : r)));
+    const r = await fetch(`/api/bank/transactions/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ category }),
+    });
+    if (!r.ok) fetch(`/api/bank/transactions?month=${month}`).then((r) => (r.ok ? r.json() : null)).then((d) => d && setRows(d));
+  }
   const LIMIT = 15;
   const visible = showAll ? shown : shown.slice(0, LIMIT);
   const totals = useMemo(() => {
@@ -1780,6 +1891,15 @@ function TransactionsFeed({ month, version, className = "" }: { month: string; v
           <h2 className="text-lg font-bold">All transactions</h2>
           <span className="text-xs text-neutral-500">{rows ? `${shown.length} this month` : ""}</span>
         </div>
+        {rows && rows.length > 5 && (
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search transactions…"
+            className="w-full px-3 py-1.5 rounded-lg bg-neutral-800/60 border border-neutral-700 text-sm placeholder:text-neutral-500 focus:outline-none focus:border-neutral-500"
+          />
+        )}
         {banks.length > 1 && (
           <div className="flex gap-1.5 overflow-x-auto -mx-1 px-1 pb-0.5">
             {["all", ...banks].map((b) => (
@@ -1826,7 +1946,7 @@ function TransactionsFeed({ month, version, className = "" }: { month: string; v
                 <div className="px-4 md:px-5 py-2 flex items-center justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-sm font-medium break-words">{r.description}</p>
-                    <p className="text-xs text-neutral-500 flex flex-wrap gap-x-2">
+                    <p className="text-xs text-neutral-500 flex flex-wrap items-center gap-x-2 gap-y-1">
                       <span>
                         {r.institution ? `${r.institution} · ` : ""}
                         {r.account}
@@ -1834,6 +1954,19 @@ function TransactionsFeed({ month, version, className = "" }: { month: string; v
                       <span className={r.kind === "income" ? "text-neutral-200" : r.kind === "purchase" ? "text-red-400" : ""}>
                         {KIND_LABEL[r.kind]}
                       </span>
+                      {r.kind === "purchase" && (
+                        <select
+                          value={r.category ?? "Other"}
+                          onChange={(e) => setCategory(r.id, e.target.value as Category)}
+                          className="bg-neutral-800/70 border border-neutral-700 rounded px-1 py-0.5 text-[11px] text-neutral-300"
+                        >
+                          {CATEGORIES.map((c) => (
+                            <option key={c} value={c}>
+                              {c}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                     </p>
                   </div>
                   <span className={`shrink-0 tabular-nums text-sm font-semibold ${r.amount > 0 ? "text-neutral-100" : "text-red-400"}`}>

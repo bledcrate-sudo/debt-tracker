@@ -18,7 +18,16 @@ export async function GET(req: Request) {
   const rows = await prisma.bankTransaction.findMany({
     where: { userId, date: { gte: from, lt: to } },
     orderBy: [{ date: "desc" }, { createdAt: "desc" }],
-    select: { id: true, institution: true, account: true, date: true, amount: true, description: true, kind: true },
+    select: {
+      id: true,
+      institution: true,
+      account: true,
+      date: true,
+      amount: true,
+      description: true,
+      kind: true,
+      category: true,
+    },
   });
   return NextResponse.json(rows);
 }

@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { roundCents } from "./money";
+import { guessCategory } from "./categorize";
 
 // One posted transaction from a cash (chequing/savings) account, normalized
 // across providers. amount > 0 is money in, amount < 0 is money out.
@@ -133,6 +134,9 @@ export async function importBankTransactions(opts: {
     amount: roundCents(t.amount),
     description: (t.raw || t.label || "Bank transaction").slice(0, 200),
     kind,
+    // Only purchases get a spending category; income/circulation/transfer
+    // rows aren't grouped by merchant.
+    category: kind === "purchase" ? guessCategory(t.raw || t.label || "") : null,
     entryId,
   });
 
@@ -159,7 +163,7 @@ export async function importBankTransactions(opts: {
           return tx.bankTransaction.upsert({
             where: { provider_key: { provider: row.provider, key: row.key } },
             create: row,
-            update: { kind, entryId },
+            update: { kind, entryId, category: row.category },
           });
         };
         if (skipAsTransfer) {

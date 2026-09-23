@@ -79,6 +79,15 @@ upgrading to fill the All transactions feed with history imported before the fee
 SimpleFIN refreshes about once a day and allows ~24 requests a day, so syncs within 10 minutes of
 the last one are skipped. The Access URL is stored encrypted with `PLAID_TOKEN_ENCRYPTION_KEY`.
 
+### Auto-sync
+
+A daily cron job (`vercel.json` → `/api/cron/sync`) refreshes every connected bank on its own, so
+Balance and the transactions feed stay current without opening the app first (SimpleFIN's own
+cooldown still limits it to about once a day either way). Set `CRON_SECRET` in your environment —
+Vercel sends it back as a bearer token automatically, nothing else to configure. Without it the
+route is only reachable outside production (e.g. local dev); "Sync banks now" always still works
+on demand.
+
 ## Stack
 
 - Next.js 14 (App Router) + React 18
@@ -106,8 +115,17 @@ the last one are skipped. The Access URL is stored encrypted with `PLAID_TOKEN_E
   and next payday, estimated from past pay dates), and what it costs your debt payoff.
 - **All transactions** — one feed of every transaction from every connected bank and account
   (Plaid and SimpleFIN together), grouped by day, each tagged with its bank · account and whether
-  it's Income, Spent, Moves or a Transfer between your own accounts, with a per-bank filter and
-  money in/out per bank. On phones it's Money → All.
+  it's Income, Spent, Moves or a Transfer between your own accounts, with a per-bank filter, a
+  search box, and money in/out per bank. On phones it's Money → All.
+- **Categories** — each purchase is auto-sorted into Groceries, Dining, Gas & Transport, Shopping,
+  Bills & Utilities, Subscriptions, Health, Entertainment, Travel, or Other from its description,
+  editable per transaction in the feed. A "Fix imported transactions" re-import recomputes it.
+- **Subscriptions** — spots recurring charges (same merchant, ~monthly, similar amount — a small
+  price bump still counts) from a year of purchase history and shows each one's amount, cadence,
+  and the total per month, with no setup needed.
+- **Auto-sync** — every connected bank refreshes once a day on its own (see below); a manual
+  "Sync banks now" is still there for right away.
+- Search and a bank picker on Income, Purchases, and Circulation, as well as the merged feed
 - Per-account currency setting
 - Edit or delete any entry; per-user data isolation enforced at the API layer
 - Optional bank sync via Plaid and/or SimpleFIN: link multiple banks, auto-sync credit card/loan
