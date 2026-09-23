@@ -3232,6 +3232,14 @@ function BankTab({ onChanged }: { onChanged: () => void }) {
           </button>
         </div>
       )}
+
+      <DeleteAllData
+        onDeleted={async () => {
+          setReimportNotice(null);
+          await Promise.all([loadItems(), loadSimplefin()]);
+          onChanged();
+        }}
+      />
     </div>
   );
 }
@@ -3239,6 +3247,89 @@ function BankTab({ onChanged }: { onChanged: () => void }) {
 // SimpleFIN Bridge: the user connects banks on simplefin.org and pastes a
 // one-time setup token here. SimpleFIN has no account types, so each account
 // shows its guessed kind with a picker to correct it.
+// Wipes every entry on the profile so bank data can be re-imported from
+// scratch. Irreversible, so it asks for DELETE to be typed first.
+function DeleteAllData({ onDeleted }: { onDeleted: () => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run() {
+    setBusy(true);
+    setError(null);
+    const r = await fetch("/api/data", {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ confirm: typed.trim().toUpperCase() }),
+    });
+    setBusy(false);
+    const body = await r.json().catch(() => null);
+    if (!r.ok) return setError(body?.error ?? "Failed to delete");
+    setOpen(false);
+    setTyped("");
+    setResult(
+      `Deleted ${body.deleted} entr${body.deleted === 1 ? "y" : "ies"}. Tap "Fix imported transactions" to bring your bank data back.`
+    );
+    await onDeleted();
+  }
+
+  return (
+    <div className="space-y-2">
+      {result && <p className="text-sm text-neutral-300">{result}</p>}
+      {!open ? (
+        <button
+          onClick={() => {
+            setOpen(true);
+            setResult(null);
+          }}
+          className="w-full py-2.5 rounded-xl border border-rose-500/40 text-sm text-rose-300 hover:bg-rose-500/10"
+        >
+          Delete all data
+        </button>
+      ) : (
+        <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 space-y-2">
+          <p className="text-sm text-rose-200 font-semibold">Delete every entry on your profile?</p>
+          <p className="text-xs text-neutral-300">
+            Removes all income, bills, purchases, circulation and debts (with their payment history) and the transaction
+            list. This can't be undone. Your bank connections, budget essentials and settings stay, so you can re-import
+            your bank data right after.
+          </p>
+          <input
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            placeholder="Type DELETE to confirm"
+            autoCapitalize="characters"
+            autoComplete="off"
+            className="w-full px-3 py-2 rounded-lg bg-neutral-900 border border-rose-500/40 focus:border-rose-400 outline-none text-sm"
+          />
+          {error && <p className="text-xs text-rose-300">{error}</p>}
+          <div className="flex gap-2">
+            <button
+              onClick={run}
+              disabled={busy || typed.trim().toUpperCase() !== "DELETE"}
+              className="flex-1 py-2 rounded-lg bg-rose-600 text-white text-sm font-semibold disabled:opacity-40"
+            >
+              {busy ? "Deleting…" : "Delete everything"}
+            </button>
+            <button
+              onClick={() => {
+                setOpen(false);
+                setTyped("");
+                setError(null);
+              }}
+              className="px-4 py-2 rounded-lg border border-neutral-700 text-sm"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SimplefinSection({
   conns,
   reload,
