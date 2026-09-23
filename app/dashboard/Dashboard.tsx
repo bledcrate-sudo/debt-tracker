@@ -1,6 +1,7 @@
 "use client";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { signOut } from "next-auth/react";
+import { usePlaidLink } from "react-plaid-link";
 import {
   type EntryType,
   type PaySource,
@@ -962,11 +963,14 @@ export default function Dashboard({
       {settingsOpen && (
         <SettingsModal
           currency={currency}
+          currentBalance={balance}
           onClose={() => setSettingsOpen(false)}
           onSaved={(code) => {
             setCurrency(code);
             setSettingsOpen(false);
           }}
+          onBanksChanged={refreshEntries}
+          onApplyBalance={adjustBalanceTo}
         />
       )}
 
@@ -1783,15 +1787,21 @@ function AdjustBalanceModal({
 
 function SettingsModal({
   currency,
+  currentBalance,
   onClose,
   onSaved,
+  onBanksChanged,
+  onApplyBalance,
 }: {
   currency: string;
+  currentBalance: number;
   onClose: () => void;
   onSaved: (code: string) => void;
+  onBanksChanged: () => void;
+  onApplyBalance: (newBalance: number) => void;
 }) {
   useEscapeClose(onClose);
-  const [tab, setTab] = useState<"currency" | "password">("currency");
+  const [tab, setTab] = useState<"currency" | "bank" | "password">("currency");
   const [picked, setPicked] = useState(currency);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1878,6 +1888,14 @@ function SettingsModal({
               Currency
             </button>
             <button
+              onClick={() => setTab("bank")}
+              className={`flex-1 px-3 py-1.5 rounded-lg text-sm transition ${
+                tab === "bank" ? "bg-red-500 text-neutral-950 font-semibold" : "text-neutral-300"
+              }`}
+            >
+              Bank
+            </button>
+            <button
               onClick={() => setTab("password")}
               className={`flex-1 px-3 py-1.5 rounded-lg text-sm transition ${
                 tab === "password" ? "bg-red-500 text-neutral-950 font-semibold" : "text-neutral-300"
@@ -1936,6 +1954,8 @@ function SettingsModal({
               </button>
             </div>
           </>
+        ) : tab === "bank" ? (
+          <BankTab currentBalance={currentBalance} onChanged={onBanksChanged} onApplyBalance={onApplyBalance} />
         ) : (
           <form onSubmit={changePassword} className="p-6 pt-3 space-y-3 overflow-y-auto">
             <input
@@ -1975,6 +1995,213 @@ function SettingsModal({
           </form>
         )}
       </div>
+    </div>
+  );
+}
+
+type PlaidAccountRow = {
+  id: string;
+  name: string;
+  mask: string | null;
+  type: string;
+  subtype: string | null;
+  lastBalance: number | null;
+  lastSyncedAt: string | null;
+  entryId: string | null;
+};
+
+type PlaidItemRow = {
+  id: string;
+  institutionName: string | null;
+  status: string;
+  error: string | null;
+  createdAt: string;
+  accounts: PlaidAccountRow[];
+};
+
+// The "Bank" settings tab: connect any number of banks via Plaid Link, see
+// what's linked, sync on demand, and unlink. Debt/credit accounts sync fully
+// automatically (see lib/plaid-sync.ts); the checking/savings total is
+// surfaced here rather than applied silently, since blindly overwriting the
+// tracked balance could clash with edits already made for past months.
+function BankTab({
+  currentBalance,
+  onChanged,
+  onApplyBalance,
+}: {
+  currentBalance: number;
+  onChanged: () => void;
+  onApplyBalance: (newBalance: number) => void;
+}) {
+  const fmt = useContext(CurrencyContext);
+  const [items, setItems] = useState<PlaidItemRow[] | null>(null);
+  const [linkToken, setLinkToken] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function loadItems() {
+    const r = await fetch("/api/plaid/items");
+    if (r.ok) setItems(await r.json());
+  }
+  useEffect(() => {
+    loadItems();
+  }, []);
+
+  const { open, ready } = usePlaidLink({
+    token: linkToken ?? "",
+    onSuccess: async (publicToken, metadata) => {
+      setBusy(true);
+      setError(null);
+      const r = await fetch("/api/plaid/exchange", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          publicToken,
+          institutionId: metadata.institution?.institution_id ?? null,
+          institutionName: metadata.institution?.name ?? null,
+        }),
+      });
+      setBusy(false);
+      setLinkToken(null);
+      if (!r.ok) {
+        const body = await r.json().catch(() => null);
+        return setError(body?.error ?? "Failed to link that bank");
+      }
+      await loadItems();
+      onChanged();
+    },
+    onExit: () => setLinkToken(null),
+  });
+  useEffect(() => {
+    if (linkToken && ready) open();
+  }, [linkToken, ready, open]);
+
+  async function connect() {
+    setError(null);
+    setBusy(true);
+    const r = await fetch("/api/plaid/link-token", { method: "POST" });
+    setBusy(false);
+    if (!r.ok) {
+      const body = await r.json().catch(() => null);
+      return setError(body?.error ?? "Failed to start bank connection");
+    }
+    const { linkToken: token } = await r.json();
+    setLinkToken(token);
+  }
+
+  async function sync(itemId: string) {
+    setSyncingId(itemId);
+    setError(null);
+    const r = await fetch("/api/plaid/sync", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ itemId }),
+    });
+    setSyncingId(null);
+    if (!r.ok) {
+      const body = await r.json().catch(() => null);
+      return setError(body?.error ?? "Sync failed");
+    }
+    await loadItems();
+    onChanged();
+  }
+
+  async function remove(itemId: string) {
+    if (!confirm("Unlink this bank? Debts it created stay, but they'll stop auto-updating.")) return;
+    setSyncingId(itemId);
+    const r = await fetch(`/api/plaid/items/${itemId}`, { method: "DELETE" });
+    setSyncingId(null);
+    if (!r.ok) return setError("Failed to unlink");
+    await loadItems();
+    onChanged();
+  }
+
+  const depositoryTotal = useMemo(() => {
+    const accounts = (items ?? []).flatMap((i) => i.accounts).filter((a) => a.type === "depository");
+    if (accounts.length === 0) return null;
+    return accounts.reduce((s, a) => s + (a.lastBalance ?? 0), 0);
+  }, [items]);
+
+  return (
+    <div className="p-6 pt-3 space-y-4 overflow-y-auto">
+      <p className="text-neutral-400 text-sm">
+        Connect a bank to auto-track credit cards and loans — balance, APR, minimum payment, and
+        due date sync in automatically. Connect as many banks as you like.
+      </p>
+
+      {error && <p className="text-rose-400 text-sm">{error}</p>}
+
+      {depositoryTotal !== null && (
+        <div className="bg-neutral-800/60 border border-neutral-700/60 rounded-xl p-4 space-y-2">
+          <p className="text-sm text-neutral-400">
+            Checking/savings balance from your bank: <span className="text-white font-semibold">{fmt(depositoryTotal)}</span>
+          </p>
+          {Math.abs(depositoryTotal - currentBalance) > 0.005 && (
+            <button
+              onClick={() => onApplyBalance(depositoryTotal)}
+              className="text-sm px-3 py-1.5 rounded-lg bg-red-500/15 border border-red-500/50 text-red-300 hover:bg-red-500/25"
+            >
+              Use as my tracked balance ({fmt(currentBalance)} → {fmt(depositoryTotal)})
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="space-y-2">
+        {items === null && <p className="text-sm text-neutral-500 italic">Loading…</p>}
+        {items?.length === 0 && (
+          <p className="text-sm text-neutral-500 italic">No banks connected yet.</p>
+        )}
+        {items?.map((item) => (
+          <div key={item.id} className="bg-neutral-800/60 border border-neutral-700/60 rounded-xl p-4">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div>
+                <p className="font-semibold">{item.institutionName ?? "Connected bank"}</p>
+                {item.status === "error" && (
+                  <p className="text-xs text-rose-400">{item.error ?? "Needs attention"}</p>
+                )}
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <button
+                  onClick={() => sync(item.id)}
+                  disabled={syncingId === item.id}
+                  className="text-xs px-2.5 py-1.5 rounded-lg bg-neutral-700/60 hover:bg-neutral-700 disabled:opacity-50"
+                >
+                  {syncingId === item.id ? "Syncing…" : "Sync now"}
+                </button>
+                <button
+                  onClick={() => remove(item.id)}
+                  disabled={syncingId === item.id}
+                  className="text-xs px-2.5 py-1.5 rounded-lg bg-neutral-700/60 hover:bg-rose-500/20 hover:text-rose-300 disabled:opacity-50"
+                >
+                  Unlink
+                </button>
+              </div>
+            </div>
+            <div className="space-y-1">
+              {item.accounts.map((a) => (
+                <div key={a.id} className="flex items-center justify-between text-sm text-neutral-400">
+                  <span>
+                    {a.name}
+                    {a.mask ? ` ••${a.mask}` : ""}
+                    <span className="text-neutral-600"> · {a.subtype ?? a.type}</span>
+                  </span>
+                  <span className="tabular-nums">{a.lastBalance != null ? fmt(a.lastBalance) : "—"}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <button
+        onClick={connect}
+        disabled={busy}
+        className="w-full py-3 rounded-xl bg-gradient-to-b from-red-500 to-red-600 hover:to-red-500 text-neutral-950 font-semibold shadow-lg shadow-red-950/50 disabled:opacity-50"
+      >
+        {busy ? "Connecting…" : "Connect a bank"}
+      </button>
     </div>
   );
 }

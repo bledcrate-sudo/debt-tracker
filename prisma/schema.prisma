@@ -19,6 +19,7 @@ model User {
   balanceAdjustment Float @default(0)
   createdAt DateTime @default(now())
   entries   Entry[]
+  plaidItems PlaidItem[]
 }
 
 model Entry {
@@ -45,6 +46,10 @@ model Entry {
   payments  Payment[] @relation("PaymentEntry")
   debtPayments DebtPayment[]
   chargedPayments Payment[] @relation("PaymentCharge")
+  // Set on a debt Entry created automatically from a linked Plaid credit
+  // card / loan account, and on a purchase imported from a bank transaction.
+  plaidAccount      PlaidAccount? @relation("PlaidAccountEntry")
+  plaidTransactionId String?      @unique
 
   @@index([userId])
   @@index([debtEntryId])
@@ -77,4 +82,47 @@ model DebtPayment {
   paidAt  DateTime @default(now())
 
   @@index([entryId])
+}
+
+// One Plaid Link "Item" = one login at one institution. A user can connect
+// several (different banks, or a second login at the same bank).
+model PlaidItem {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  itemId          String   @unique // Plaid's item_id
+  // AES-256-GCM ciphertext (see lib/plaid-crypto.ts) — never store this raw.
+  accessToken     String
+  institutionId   String?
+  institutionName String?
+  cursor          String? // transactions/sync cursor; null means "never synced"
+  status          String   @default("active") // "active" | "error"
+  error           String?
+  createdAt       DateTime @default(now())
+  accounts        PlaidAccount[]
+
+  @@index([userId])
+}
+
+model PlaidAccount {
+  id           String    @id @default(cuid())
+  plaidItemId  String
+  plaidItem    PlaidItem @relation(fields: [plaidItemId], references: [id], onDelete: Cascade)
+  accountId    String    @unique // Plaid's account_id
+  name         String
+  mask         String?
+  type         String    // Plaid account type: "depository" | "credit" | "loan" | ...
+  subtype      String?
+  // Only set for credit/loan accounts, which get mirrored into a debt Entry.
+  // Depository (checking/savings) accounts have no Entry of their own —
+  // their balance is surfaced directly and their transactions import as
+  // purchase Entries (see lib/plaid-sync.ts).
+  entryId      String?   @unique
+  entry        Entry?    @relation("PlaidAccountEntry", fields: [entryId], references: [id], onDelete: SetNull)
+  // Last balance we saw, so the next sync can compute a charge/payment delta
+  // for debt accounts instead of overwriting the Entry's amount outright.
+  lastBalance  Float?
+  lastSyncedAt DateTime?
+
+  @@index([plaidItemId])
 }
