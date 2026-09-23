@@ -79,6 +79,21 @@ describe("classifyTxn", () => {
     expect(c(-9.99, "NETFLIX.COM")).toBe("purchase");
   });
 
+  it("treats TD's VFC-prefixed transactions as e-transfers (circulation), not income", () => {
+    const td = (amount: number, label: string, institution: string | null = "TD Canada Trust", hint?: "income") =>
+      classifyTxn({ amount, label, institution, hint });
+    expect(td(250, "VFC1234567 DEPOSIT")).toBe("circulation");
+    expect(td(250, "vfc SAM SMITH")).toBe("circulation");
+    expect(td(-80, "VFC SEND ALEX")).toBe("circulation");
+    expect(td(250, "VFC1234567", "TD Bank")).toBe("circulation");
+    expect(td(250, "VFC1234567", "The Toronto-Dominion Bank")).toBe("circulation");
+    expect(td(250, "VFC1234567", null)).toBe("circulation"); // bank unknown
+    expect(td(250, "VFC1234567", "TD Canada Trust", "income")).toBe("circulation"); // beats Plaid's category
+    // Only at the start, and only for TD.
+    expect(td(2100, "PAYROLL DEPOSIT VFC CORP")).toBe("income");
+    expect(td(2100, "VFC PAYROLL", "EQ Bank")).toBe("income");
+  });
+
   it("uses the provider's category when it has one", () => {
     expect(classifyTxn({ amount: 500, label: "MISC", hint: "income" })).toBe("income");
   });

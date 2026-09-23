@@ -31,6 +31,10 @@ import { IMPORT_NOTE } from "./constants";
 export const IMPORTED_TYPES = ["purchase", "income", "circulation"];
 
 const ETRANSFER = /e-?\s?transfer|\be-?tfr\b|interac|auto-?deposit|send money|money request|request money/i;
+// TD describes Interac e-Transfers with a "VFC..." prefix, which the rules
+// below would otherwise take for a deposit (income).
+const TD_ETRANSFER = /^\s*vfc/i;
+const TD = /^td\b|\btd (bank|canada)|toronto[- ]dominion/i;
 const PAY_IN = /payroll|salary|wages|pay\s?(cheque|check)|direct dep|dir dep|\bdeposit\b|\bdep\b|\bpay\b/i;
 // "PAY"/"DEPOSIT" also appear in refunds and wallet payments — not pay.
 const NOT_PAY = /apple pay|google pay|samsung pay|paypal|refund|reversal|return/i;
@@ -39,9 +43,12 @@ const DEBT_ACCOUNT = /visa|master ?card|\bmc\b|amex|american express|credit card
 
 // Sorts a transaction by its description. Keyword-based, so an odd bank
 // description can land in the wrong section.
-export function classifyTxn(t: Pick<BankTxn, "amount" | "label" | "hint">): TxnKind {
-  if (t.hint) return t.hint;
+export function classifyTxn(t: Pick<BankTxn, "amount" | "label" | "hint" | "institution">): TxnKind {
   const label = t.label ?? "";
+  // Checked before the provider's category: at TD these are e-transfers.
+  // Applied when the bank is unknown too; other banks keep the usual rules.
+  if (TD_ETRANSFER.test(label) && (!t.institution || TD.test(t.institution))) return "circulation";
+  if (t.hint) return t.hint;
   if (ETRANSFER.test(label)) return "circulation";
   if (t.amount > 0) return PAY_IN.test(label) && !NOT_PAY.test(label) ? "income" : "circulation";
   return PAYMENT.test(label) && DEBT_ACCOUNT.test(label) ? "circulation" : "purchase";
