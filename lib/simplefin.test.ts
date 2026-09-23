@@ -1,5 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
+import { encryptionKeyError } from "./plaid-crypto";
 import {
+  createConnection,
   decodeSetupToken,
   claimAccessUrl,
   fetchAccountSet,
@@ -101,5 +103,42 @@ describe("sanitizeMessage", () => {
   it("strips markup and control characters and caps length", () => {
     expect(sanitizeMessage("<b>Connection</b> needs\u0007 attention")).toBe("Connection needs attention");
     expect(sanitizeMessage("x".repeat(500))).toHaveLength(300);
+  });
+});
+
+describe("encryption key check", () => {
+  const original = process.env.PLAID_TOKEN_ENCRYPTION_KEY;
+  afterEach(() => {
+    process.env.PLAID_TOKEN_ENCRYPTION_KEY = original;
+  });
+  const hex = "0".repeat(64);
+
+  it("accepts a key pasted with quotes or whitespace", () => {
+    process.env.PLAID_TOKEN_ENCRYPTION_KEY = ` "${hex}" `;
+    expect(encryptionKeyError()).toBeNull();
+  });
+  it("explains a missing or malformed key", () => {
+    delete process.env.PLAID_TOKEN_ENCRYPTION_KEY;
+    expect(encryptionKeyError()).toMatch(/not set/);
+    process.env.PLAID_TOKEN_ENCRYPTION_KEY = "abc123";
+    expect(encryptionKeyError()).toMatch(/64 hex characters/);
+  });
+  it("never claims the single-use token when the key is unusable", async () => {
+    delete process.env.PLAID_TOKEN_ENCRYPTION_KEY;
+    let called = false;
+    const spy = (async () => {
+      called = true;
+      return new Response("https://u:p@x.org/s");
+    }) as typeof fetch;
+    await expect(createConnection("u1", b64("https://x.org/claim/1"), spy)).rejects.toThrow(/Server setup incomplete/);
+    expect(called).toBe(false);
+  });
+});
+
+describe("claimAccessUrl response handling", () => {
+  it("rejects a non-URL response body with a readable error", async () => {
+    await expect(claimAccessUrl(b64("https://x.org/claim/1"), stubFetch(200, "<html>oops</html>"))).rejects.toThrow(
+      /unexpected response/
+    );
   });
 });

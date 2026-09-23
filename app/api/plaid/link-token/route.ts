@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { plaidClient, PLAID_PRODUCTS, PLAID_OPTIONAL_PRODUCTS, PLAID_COUNTRY_CODES, plaidAccessError } from "@/lib/plaid";
 import { currentUserId } from "@/lib/session";
+import { encryptionKeyError } from "@/lib/plaid-crypto";
 
 // Creates a fresh Link token for the "connect a bank" button. No item_id is
 // passed, so every call starts a new Item — this is how a user links more
@@ -8,7 +9,7 @@ import { currentUserId } from "@/lib/session";
 export async function POST() {
   const userId = await currentUserId();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const denied = await plaidAccessError(userId);
+  const denied = encryptionKeyError() ?? (await plaidAccessError(userId));
   if (denied) return NextResponse.json({ error: denied }, { status: 403 });
 
   try {

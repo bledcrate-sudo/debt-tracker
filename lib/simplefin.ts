@@ -1,5 +1,5 @@
 import { prisma } from "./prisma";
-import { encryptToken, decryptToken } from "./plaid-crypto";
+import { encryptToken, decryptToken, encryptionKeyError } from "./plaid-crypto";
 import { roundCents } from "./money";
 
 // SimpleFIN protocol v1 (https://www.simplefin.org/protocol.html): the user
@@ -65,16 +65,19 @@ export function decodeSetupToken(token: string): string {
 
 export async function claimAccessUrl(setupToken: string, fetchImpl: Fetch = fetch): Promise<string> {
   const claimUrl = decodeSetupToken(setupToken);
-  const res = await request(fetchImpl, claimUrl, { method: "POST", headers: { "content-length": "0" } });
+  const res = await request(fetchImpl, claimUrl, { method: "POST" });
   if (res.status === 403)
     throw new SimplefinError(
       "This setup token was already used or isn't valid. If you didn't use it yourself, it may be compromised — disable it on SimpleFIN Bridge and create a new one."
     );
   if (!res.ok) throw new SimplefinError(`SimpleFIN claim failed (HTTP ${res.status})`);
   const accessUrl = (await res.text()).trim();
-  const parsed = new URL(accessUrl);
-  if (parsed.protocol !== "https:" || !parsed.username)
-    throw new SimplefinError("SimpleFIN returned an unexpected access URL");
+  let parsed: URL | null = null;
+  try {
+    parsed = new URL(accessUrl);
+  } catch {}
+  if (!parsed || parsed.protocol !== "https:" || !parsed.username)
+    throw new SimplefinError("SimpleFIN returned an unexpected response when claiming the token");
   return accessUrl;
 }
 
@@ -136,6 +139,10 @@ export type SimplefinSyncSummary = {
 };
 
 export async function createConnection(userId: string, setupToken: string, fetchImpl: Fetch = fetch) {
+  // The setup token works once: make sure the Access URL can be stored
+  // before claiming it.
+  const keyError = encryptionKeyError();
+  if (keyError) throw new SimplefinError(keyError);
   const accessUrl = await claimAccessUrl(setupToken, fetchImpl);
   return prisma.simplefinConnection.create({
     data: { userId, accessUrl: encryptToken(accessUrl) },
