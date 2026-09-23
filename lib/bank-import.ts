@@ -22,7 +22,8 @@ export type BankTxn = {
 // spending totals, so those reflect what was actually earned and spent.
 export type TxnKind = "income" | "purchase" | "circulation";
 
-export const IMPORT_NOTE = "Synced from bank";
+export { IMPORT_NOTE } from "./constants";
+import { IMPORT_NOTE } from "./constants";
 // Entry types the importers create (debts are created by the account sync).
 export const IMPORTED_TYPES = ["purchase", "income", "circulation"];
 

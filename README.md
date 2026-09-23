@@ -91,6 +91,11 @@ the last one are skipped. The Access URL is stored encrypted with `PLAID_TOKEN_E
 - Purchases and one-off bills can be paid from balance, off-balance, or charged to a card/loan
 - Avalanche/snowball payoff planner with interest simulation, a payoff chart, and a
   "what if I paid more" calculator
+- **Budget**: list your essentials (groceries, gas…) with monthly amounts. Each month's pay is
+  split in order — bills, then debt minimums, then essentials — showing what's paid, set aside, or
+  still short. What's left goes partly to an extra payment on the debt the payoff plan targets
+  first (the "% to debt" slider, saved to your account) and the rest is free to spend. Give an
+  essential store names (e.g. `costco, superstore`) to track spending against it.
 - Per-account currency setting
 - Edit or delete any entry; per-user data isolation enforced at the API layer
 - Optional bank sync via Plaid and/or SimpleFIN: link multiple banks, auto-sync credit card/loan

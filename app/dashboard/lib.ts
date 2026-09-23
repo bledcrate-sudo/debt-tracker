@@ -321,3 +321,113 @@ export function anchorLedger<T extends { month: string; carryIn: number; closing
     available: r.available + offset,
   }));
 }
+
+// ---- Budget --------------------------------------------------------------
+
+export type BudgetItem = { id: string; label: string; amount: number; keywords: string | null };
+
+export type BudgetLine = {
+  kind: "bill" | "debt" | "essential";
+  id: string;
+  label: string;
+  need: number; // what this line takes this month
+  paid: boolean; // bill paid / debt payment made this cycle
+  funded: number; // covered by this month's pay so far
+  short: number; // still uncovered
+  dueDay?: number | null;
+  spent?: number; // essentials: matching purchases this month
+  noMinimum?: boolean; // debt with no minimum payment set
+};
+
+export type BudgetPlan = {
+  income: number;
+  lines: BudgetLine[];
+  totalNeed: number;
+  covered: number;
+  leftover: number; // pay left after every line is covered
+  extraToDebt: number;
+  extraTarget: { id: string; label: string } | null;
+  freeToSpend: number;
+};
+
+// Case-insensitive "any keyword appears in the description".
+export function matchesKeywords(label: string, keywords: string | null): boolean {
+  const words = (keywords ?? "")
+    .split(",")
+    .map((w) => w.trim().toLowerCase())
+    .filter(Boolean);
+  const l = label.toLowerCase();
+  return words.some((w) => l.includes(w));
+}
+
+const cents = (n: number) => Math.round(n * 100) / 100;
+
+// Splits the month's pay in priority order — bills, then debt minimums, then
+// essentials — so each line shows whether it's covered yet; with more than
+// one paycheque, later lines fill in as pay arrives. Whatever's left once
+// everything is covered is split between an extra payment on the priority
+// debt (debtSharePct) and money that's free to spend.
+export function planBudget(input: {
+  income: number;
+  bills: { id: string; label: string; amount: number; paid: boolean }[];
+  debts: { id: string; label: string; balance: number; minPayment: number | null; dueDay: number | null; paid: boolean }[];
+  essentials: { id: string; label: string; amount: number; spent: number }[];
+  debtSharePct: number;
+  // The debt to put extra on (the payoff plan's "attack first").
+  target: { id: string; label: string; balance: number } | null;
+}): BudgetPlan {
+  const lines: BudgetLine[] = [
+    ...input.bills.map((b) => ({ kind: "bill" as const, id: b.id, label: b.label, need: cents(b.amount), paid: b.paid, funded: 0, short: 0 })),
+    ...input.debts
+      .filter((d) => d.balance > 0.005)
+      .map((d) => ({
+        kind: "debt" as const,
+        id: d.id,
+        label: d.label,
+        // Never more than what's left owing.
+        need: cents(Math.min(d.minPayment ?? 0, d.balance)),
+        paid: d.paid,
+        funded: 0,
+        short: 0,
+        dueDay: d.dueDay,
+        noMinimum: !d.minPayment,
+      })),
+    ...input.essentials.map((e) => ({
+      kind: "essential" as const,
+      id: e.id,
+      label: e.label,
+      need: cents(e.amount),
+      paid: false,
+      funded: 0,
+      short: 0,
+      spent: cents(e.spent),
+    })),
+  ];
+
+  let remaining = Math.max(0, input.income);
+  for (const line of lines) {
+    line.funded = cents(Math.min(line.need, remaining));
+    line.short = cents(line.need - line.funded);
+    remaining = cents(remaining - line.funded);
+  }
+
+  const totalNeed = cents(lines.reduce((s, l) => s + l.need, 0));
+  const covered = cents(lines.reduce((s, l) => s + l.funded, 0));
+  const leftover = remaining;
+  const target = input.target && input.target.balance > 0.005 ? input.target : null;
+  // Don't suggest paying more than the target still owes after its minimum.
+  const targetMin = target ? lines.find((l) => l.kind === "debt" && l.id === target.id)?.need ?? 0 : 0;
+  const pct = Math.min(100, Math.max(0, input.debtSharePct));
+  const extraToDebt = target ? cents(Math.min(leftover * (pct / 100), Math.max(0, target.balance - targetMin))) : 0;
+
+  return {
+    income: cents(input.income),
+    lines,
+    totalNeed,
+    covered,
+    leftover,
+    extraToDebt,
+    extraTarget: target ? { id: target.id, label: target.label } : null,
+    freeToSpend: cents(leftover - extraToDebt),
+  };
+}

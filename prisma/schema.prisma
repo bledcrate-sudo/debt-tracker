@@ -21,6 +21,11 @@ model User {
   entries   Entry[]
   plaidItems PlaidItem[]
   simplefinConnections SimplefinConnection[]
+  budgetItems BudgetItem[]
+  // Share (%) of money left after bills, debt minimums and essentials that
+  // goes to extra debt payments; the rest is free to spend. Shared by the
+  // Budget section and the Debt payment plan so their advice agrees.
+  debtSharePct Int @default(50)
 }
 
 model Entry {
@@ -199,4 +204,21 @@ model SimplefinTransaction {
   createdAt    DateTime            @default(now())
 
   @@index([connectionId])
+}
+
+// An essential the user budgets for each month (groceries, gas...). The
+// Budget section funds these from the month's pay after bills and debt
+// minimums. Purchases whose description contains one of the keywords count
+// as spent against it.
+model BudgetItem {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label     String
+  amount    Float // per month
+  keywords  String? // comma-separated, matched case-insensitively
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }

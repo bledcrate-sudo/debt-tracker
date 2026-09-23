@@ -1,5 +1,5 @@
 "use client";
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { signOut } from "next-auth/react";
 import { usePlaidLink } from "react-plaid-link";
 import {
@@ -24,8 +24,13 @@ import {
   monthLabel,
   buildSuggestions,
   anchorLedger,
+  planBudget,
+  matchesKeywords,
   type BankBalance,
+  type BudgetItem,
+  type BudgetPlan,
 } from "./lib";
+import { IMPORT_NOTE } from "@/lib/constants";
 
 // Provided by Dashboard so every subcomponent formats in the signed-in user's
 // currency without threading a prop through each one; the default here only
@@ -49,6 +54,8 @@ export default function Dashboard({
   userCurrency,
   userBalanceAdjustment,
   initialBank,
+  initialBudgetItems,
+  userDebtSharePct,
 }: {
   initialEntries: Entry[];
   userEmail: string;
@@ -56,6 +63,8 @@ export default function Dashboard({
   userCurrency: string;
   userBalanceAdjustment: number;
   initialBank: BankBalance | null;
+  initialBudgetItems: BudgetItem[];
+  userDebtSharePct: number;
 }) {
   const [currency, setCurrency] = useState(userCurrency);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -85,7 +94,23 @@ export default function Dashboard({
   const [modalType, setModalType] = useState<EntryType | null>(null);
   const [busy, setBusy] = useState(false);
   const [strategy, setStrategy] = useState<"avalanche" | "snowball">("avalanche");
-  const [payoutPct, setPayoutPct] = useState(50);
+  // Share of spare money that goes to extra debt payments. Saved to the
+  // account (debounced) and shared by the Budget and the Debt payment plan.
+  const [payoutPct, setPayoutPct] = useState(userDebtSharePct);
+  const savedPct = useRef(userDebtSharePct);
+  useEffect(() => {
+    if (payoutPct === savedPct.current) return;
+    const t = setTimeout(async () => {
+      const r = await fetch("/api/budget", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ debtSharePct: payoutPct }),
+      });
+      if (r.ok) savedPct.current = payoutPct;
+    }, 600);
+    return () => clearTimeout(t);
+  }, [payoutPct]);
+  const [budgetItems, setBudgetItems] = useState<BudgetItem[]>(initialBudgetItems);
 
   const [currentMonth, setCurrentMonth] = useState(() => monthKey(new Date()));
   const startMonth = useMemo(() => {
@@ -364,7 +389,11 @@ export default function Dashboard({
   // DTI reflects income capacity, not whether this month's paycheck has
   // been ticked "received" yet, so it's keyed off expected income.
   const dti = expectedIncome > 0 ? totalDebt / (expectedIncome * 12) : 0;
-  const monthlyToDebt = Math.max(0, monthlySurplus * (payoutPct / 100));
+  // Set once the budget below is computed: when this month's pay leaves an
+  // extra debt payment, the plan projects with that; otherwise it falls back
+  // to a share of what's free after bills.
+  const [budgetExtra, setBudgetExtra] = useState<number | null>(null);
+  const monthlyToDebt = budgetExtra ?? Math.max(0, monthlySurplus * (payoutPct / 100));
   // The simulation below pays every debt's minimum on top of monthlyToDebt,
   // so the real monthly outlay is the two combined, not monthlyToDebt alone.
   const totalMinPayments = useMemo(
@@ -376,6 +405,7 @@ export default function Dashboard({
   // target debt, freed minimums snowball forward, interest accrues monthly.
   const [whatIfExtra, setWhatIfExtra] = useState(0);
   const [showPlanDetails, setShowPlanDetails] = useState(false);
+  const [summaryOpen, toggleSummary] = usePersistentToggle("dt.summary.open", false);
 
   const plan = useMemo(
     () => simulatePayoff(debts, strategy, monthlyToDebt),
@@ -391,6 +421,47 @@ export default function Dashboard({
   );
   const payoffOrder = plan.order;
   const monthsToClear = debts.length === 0 ? 0 : plan.monthsToClear;
+
+  // This month's pay split across bills, debt minimums and essentials.
+  const budget: BudgetPlan = useMemo(() => {
+    const monthPurchases = purchases.filter((e) => bornIn(e) === selectedMonth);
+    const paidThisCycle = (d: (typeof debts)[number]) =>
+      d.dueDay != null
+        ? paidSinceLastDue(d.dueDay, d.debtPayments)
+        : d.debtPayments.some((p) => p.kind === "payment" && monthKey(new Date(p.paidAt)) === selectedMonth);
+    const target = payoffOrder.find((d) => d.amount > 0.005);
+    return planBudget({
+      income: monthRow?.receivedIncome ?? 0,
+      bills: monthExpenses.map((e) => ({
+        id: e.id,
+        label: e.label,
+        amount: e.amount,
+        // One-off bills are settled when logged; monthly ones once marked paid.
+        paid: e.frequency !== "monthly" || e.payments.some((p) => p.month === selectedMonth),
+      })),
+      debts: debts.map((d) => ({
+        id: d.id,
+        label: d.label,
+        balance: d.amount,
+        minPayment: d.minPayment ?? null,
+        dueDay: d.dueDay ?? null,
+        paid: paidThisCycle(d),
+      })),
+      essentials: budgetItems.map((b) => ({
+        id: b.id,
+        label: b.label,
+        amount: b.amount,
+        spent: b.keywords
+          ? monthPurchases.filter((p) => matchesKeywords(p.label, b.keywords)).reduce((s, p) => s + p.amount, 0)
+          : 0,
+      })),
+      debtSharePct: payoutPct,
+      target: target ? { id: target.id, label: target.label, balance: target.amount } : null,
+    });
+  }, [purchases, selectedMonth, debts, payoffOrder, monthRow, monthExpenses, budgetItems, payoutPct]);
+  useEffect(() => {
+    setBudgetExtra(budgetItems.length > 0 && budget.extraToDebt > 0 ? budget.extraToDebt : null);
+  }, [budgetItems.length, budget.extraToDebt]);
 
   // Overall payoff progress across all debts (paid vs everything owed so far).
   const totalOwedEver = useMemo(
@@ -499,7 +570,7 @@ export default function Dashboard({
 
   return (
     <CurrencyContext.Provider value={fmt}>
-    <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-8">
+    <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
       {isOffline && (
         <div
           role="status"
@@ -573,7 +644,7 @@ export default function Dashboard({
       </header>
 
       {/* Summary cards */}
-      <section className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <section className={`grid grid-cols-2 gap-4 ${budgetItems.length ? "md:grid-cols-4" : "md:grid-cols-5"}`}>
         <StatCard
           label="Balance"
           value={fmt(balance)}
@@ -615,18 +686,22 @@ export default function Dashboard({
           }
         />
         <StatCard label="Debt" value={fmt(totalDebt)} accent="maroon" />
+        {budgetItems.length === 0 && (
         <div className="col-span-2 md:col-span-1">
-          <StatCard
-            label="Free to spend"
-            value={fmt(monthlySurplus)}
-            accent={monthlySurplus >= 0 ? "highlight" : "rose"}
-            sub={
-              monthRow && monthRow.billsUnpaid > 0
-                ? `After ${fmt(monthRow.billsUnpaid)} of bills left`
-                : "Bills covered — all yours"
-            }
-          />
+          {(
+            <StatCard
+              label="Free to spend"
+              value={fmt(monthlySurplus)}
+              accent={monthlySurplus >= 0 ? "highlight" : "rose"}
+              sub={
+                monthRow && monthRow.billsUnpaid > 0
+                  ? `After ${fmt(monthRow.billsUnpaid)} of bills left`
+                  : "Bills covered — all yours"
+              }
+            />
+          )}
         </div>
+        )}
       </section>
 
       {monthRow && monthRow.expectedIncome > monthRow.receivedIncome && (
@@ -635,6 +710,14 @@ export default function Dashboard({
           received in the Income table once it lands.
         </p>
       )}
+
+      <BudgetSection
+        plan={budget}
+        items={budgetItems}
+        monthName={monthDisplay(selectedMonth)}
+        debtSharePct={payoutPct}
+        onSaved={setBudgetItems}
+      />
 
       {milestone && (
         <section
@@ -718,10 +801,17 @@ export default function Dashboard({
 
       {/* Summary table */}
       <section className="bg-neutral-900/60 border border-neutral-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-neutral-800 flex items-center justify-between">
-          <h2 className="text-lg font-bold">Monthly summary</h2>
-          <span className="text-xs text-neutral-500">All numbers combined</span>
-        </div>
+        <button
+          onClick={toggleSummary}
+          className={`w-full px-5 py-3 flex items-center justify-between text-left ${summaryOpen ? "border-b border-neutral-800" : ""}`}
+        >
+          <h2 className="text-lg font-bold flex items-center gap-2">
+            <span className={`text-neutral-500 transition-transform ${summaryOpen ? "rotate-90" : ""}`}>›</span>
+            Monthly summary
+          </h2>
+          <span className="text-sm tabular-nums text-neutral-300">Net {fmt(balance)}</span>
+        </button>
+        {summaryOpen && (
         <table className="w-full text-sm">
           <thead className="bg-neutral-900 text-neutral-400 text-xs uppercase">
             <tr>
@@ -780,10 +870,11 @@ export default function Dashboard({
             </tr>
           </tbody>
         </table>
+        )}
       </section>
 
       {/* Debt payment plan */}
-      <section className="bg-gradient-to-br from-rose-700/10 via-neutral-900 to-neutral-900 border border-rose-700/30 rounded-2xl p-6">
+      <section className="bg-gradient-to-br from-rose-700/10 via-neutral-900 to-neutral-900 border border-rose-700/30 rounded-2xl p-5">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div>
             <h2 className="text-xl font-bold flex items-center gap-2">
@@ -793,7 +884,15 @@ export default function Dashboard({
               </span>
             </h2>
             <p className="text-neutral-400 text-sm">
-              Driven by what's <span className="text-white">free after this month's bills</span> ({fmt(monthlySurplus)}).
+              {budgetExtra != null ? (
+                <>
+                  Driven by <span className="text-white">your budget</span>: minimums plus {fmt(budgetExtra)} extra a month.
+                </>
+              ) : (
+                <>
+                  Driven by what's <span className="text-white">free after this month's bills</span> ({fmt(monthlySurplus)}).
+                </>
+              )}
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -839,7 +938,7 @@ export default function Dashboard({
           </p>
         )}
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
           <MiniStat
             label="Total to debt / mo"
             value={fmt(monthlyToDebt + totalMinPayments)}
@@ -874,10 +973,10 @@ export default function Dashboard({
           <>
             <button
               onClick={() => setShowPlanDetails((v) => !v)}
-              className="text-sm text-neutral-400 hover:text-white mb-5 flex items-center gap-1.5"
+              className={`text-sm text-neutral-400 hover:text-white flex items-center gap-1.5 ${showPlanDetails ? "mb-5" : ""}`}
             >
               <span className={`transition-transform ${showPlanDetails ? "rotate-90" : ""}`}>›</span>
-              {showPlanDetails ? "Hide" : "Show"} chart &amp; "what if" calculator
+              {showPlanDetails ? "Hide" : "Show"} payoff order, chart &amp; tips
             </button>
             {showPlanDetails && (
               <div className="grid md:grid-cols-2 gap-3 mb-5">
@@ -928,7 +1027,7 @@ export default function Dashboard({
 
         {debts.length === 0 ? (
           <p className="text-neutral-400 italic">No debts logged. Hit "+ Debt" to start planning.</p>
-        ) : (
+        ) : showPlanDetails && (
           <div className="overflow-x-auto bg-neutral-900/60 border border-neutral-800 rounded-xl">
             <table className="w-full text-sm">
               <thead className="bg-neutral-900 text-neutral-400 text-xs uppercase">
@@ -984,7 +1083,7 @@ export default function Dashboard({
           </div>
         )}
 
-        {suggestions.length > 0 && (
+        {(showPlanDetails || debts.length === 0) && suggestions.length > 0 && (
           <div className="mt-5 grid sm:grid-cols-2 gap-3">
             {suggestions.map((s, i) => (
               <div
@@ -1116,6 +1215,10 @@ function CategoryTable({
 }) {
   const fmt = useContext(CurrencyContext);
   const marks = paidLabels ?? { header: "Paid", yes: "✓ Paid", no: "Mark paid" };
+  // Bank sync can put dozens of rows in a month; show the latest few.
+  const ROW_LIMIT = 5;
+  const [showAll, setShowAll] = useState(false);
+  const shown = showAll ? rows : rows.slice(0, ROW_LIMIT);
   const map = {
     red: { bar: "bg-red-500", text: "text-red-400", chip: "bg-red-500/15 border-red-500/30", btn: "bg-gradient-to-b from-red-500 to-red-600 hover:to-red-500 text-neutral-950 shadow-md shadow-red-950/40" },
     rose: { bar: "bg-rose-500", text: "text-rose-400", chip: "bg-rose-500/15 border-rose-500/30", btn: "bg-gradient-to-b from-rose-500 to-rose-600 hover:to-rose-500 text-white shadow-md shadow-rose-950/40" },
@@ -1126,7 +1229,7 @@ function CategoryTable({
   return (
     <div className="bg-neutral-900/60 border border-neutral-800 rounded-2xl overflow-hidden flex flex-col">
       <div className={`h-1 ${map.bar}`} />
-      <div className="px-5 py-4 flex items-center justify-between border-b border-neutral-800">
+      <div className="px-5 py-3 flex items-center justify-between border-b border-neutral-800">
         <div>
           <h3 className="text-lg font-bold">{title}</h3>
           <p className={`text-sm tabular-nums ${map.text} font-semibold`}>{fmt(total)}</p>
@@ -1159,11 +1262,11 @@ function CategoryTable({
                 </td>
               </tr>
             )}
-            {rows.map((e) => {
+            {shown.map((e) => {
               const paid = !!selectedMonth && e.payments.some((p) => p.month === selectedMonth);
               return (
               <tr key={e.id} className={`hover:bg-neutral-800/40 ${paid ? "bg-red-500/5" : ""}`}>
-                <td className="px-4 py-2.5">
+                <td className="px-4 py-2">
                   <p className="font-medium flex flex-wrap items-center gap-x-2 gap-y-0.5 break-words">
                     {e.label}
                     {e.type === "circulation" ? (
@@ -1230,7 +1333,9 @@ function CategoryTable({
                       </span>
                     )}
                   </p>
-                  {e.note && <p className="text-xs text-neutral-500 break-words">{e.note}</p>}
+                  {e.note && e.note !== IMPORT_NOTE && (
+                    <p className="text-xs text-neutral-500 break-words">{e.note}</p>
+                  )}
                   {onLogPayment && (!!e.paidSoFar || !!e.chargedSoFar) && (
                     <p className="text-xs text-neutral-500 break-words">
                       {fmt(e.paidSoFar ?? 0)} paid
@@ -1238,16 +1343,16 @@ function CategoryTable({
                     </p>
                   )}
                 </td>
-                <td className={`px-4 py-2.5 text-right tabular-nums font-semibold ${map.text}`}>
+                <td className={`px-4 py-2 text-right tabular-nums font-semibold ${map.text}`}>
                   {e.type === "circulation" ? `${e.sourceKind === "out" ? "−" : "+"}${fmt(e.amount)}` : fmt(e.amount)}
                 </td>
                 {showShare && (
-                  <td className="px-4 py-2.5 text-right text-neutral-400 tabular-nums">
+                  <td className="px-4 py-2 text-right text-neutral-400 tabular-nums">
                     {total ? pct(e.amount / total) : "—"}
                   </td>
                 )}
                 {onTogglePaid && (
-                  <td className="px-4 py-2.5 text-center">
+                  <td className="px-4 py-2 text-center">
                     {e.frequency === "monthly" ? (
                       <button
                         onClick={() => onTogglePaid(e.id, paid, e.label, e.amount)}
@@ -1269,7 +1374,7 @@ function CategoryTable({
                     )}
                   </td>
                 )}
-                <td className="px-4 py-2.5 text-right">
+                <td className="px-4 py-2 text-right">
                   <div className="flex items-center justify-end gap-2">
                     {onLogPayment && (
                       <button
@@ -1302,6 +1407,312 @@ function CategoryTable({
             })}
           </tbody>
         </table>
+      </div>
+      {rows.length > ROW_LIMIT && (
+        <button
+          onClick={() => setShowAll((v) => !v)}
+          className="w-full py-2 text-xs text-neutral-400 hover:text-white border-t border-neutral-800"
+        >
+          {showAll ? "Show fewer" : `Show all ${rows.length}`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Remembers whether a section is open on this device (a display preference,
+// so localStorage is fine; it's optional and falls back to the default).
+function usePersistentToggle(key: string, initial: boolean) {
+  const [open, setOpen] = useState(initial);
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(key);
+      if (v !== null) setOpen(v === "1");
+    } catch {}
+  }, [key]);
+  const toggle = () =>
+    setOpen((o) => {
+      try {
+        localStorage.setItem(key, o ? "0" : "1");
+      } catch {}
+      return !o;
+    });
+  return [open, toggle] as const;
+}
+
+// Next calendar date a "due on the Nth" payment falls on.
+const nextDueLabel = (dueDay: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() + daysUntilDue(dueDay));
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+};
+
+function BudgetSection({
+  plan,
+  items,
+  monthName,
+  debtSharePct,
+  onSaved,
+}: {
+  plan: BudgetPlan;
+  items: BudgetItem[];
+  monthName: string;
+  debtSharePct: number;
+  onSaved: (items: BudgetItem[]) => void;
+}) {
+  const fmt = useContext(CurrencyContext);
+  const [open, toggle] = usePersistentToggle("dt.budget.open", true);
+  const [editing, setEditing] = useState(false);
+
+  const pay = plan.lines.filter((l) => l.kind !== "essential");
+  const essentials = plan.lines.filter((l) => l.kind === "essential");
+  const pctCovered = plan.totalNeed > 0 ? Math.min(1, plan.covered / plan.totalNeed) : plan.income > 0 ? 1 : 0;
+
+  const status = (l: (typeof plan.lines)[number]) => {
+    if (l.kind === "debt" && l.noMinimum) return { text: "No minimum set", tone: "muted" };
+    if (l.paid) return { text: "Paid ✓", tone: "good" };
+    if (l.short > 0) return { text: `Short ${fmt(l.short)}`, tone: "bad" };
+    if (l.kind === "debt") return { text: l.dueDay ? `Pay by ${nextDueLabel(l.dueDay)}` : "Pay this month", tone: "todo" };
+    if (l.kind === "bill") return { text: "Set aside", tone: "todo" };
+    if ((l.spent ?? 0) > l.need) return { text: `Over ${fmt((l.spent ?? 0) - l.need)}`, tone: "bad" };
+    return { text: "Covered", tone: "good" };
+  };
+  const chip = {
+    good: "bg-neutral-500/15 text-neutral-200 border-neutral-500/30",
+    todo: "bg-red-500/15 text-red-300 border-red-500/30",
+    bad: "bg-rose-500/20 text-rose-300 border-rose-500/40",
+    muted: "bg-neutral-800 text-neutral-500 border-neutral-700",
+  } as Record<string, string>;
+
+  const Row = ({ l }: { l: (typeof plan.lines)[number] }) => {
+    const st = status(l);
+    const left = Math.max(0, l.funded - (l.spent ?? 0));
+    const sub =
+      l.kind === "essential"
+        ? l.spent
+          ? l.spent > l.need
+            ? `${fmt(l.spent)} spent · over by ${fmt(l.spent - l.need)}`
+            : `${fmt(l.spent)} spent · ${fmt(left)} left`
+          : `Up to ${fmt(l.funded)} to spend`
+        : l.kind === "debt"
+        ? "Minimum payment"
+        : "Bill";
+    return (
+      <li className="flex items-center justify-between gap-3 py-2">
+        <div className="min-w-0">
+          <p className="font-medium break-words">{l.label}</p>
+          <p className="text-xs text-neutral-500">{sub}</p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="tabular-nums text-sm">{l.kind === "debt" && l.noMinimum ? "—" : fmt(l.need)}</span>
+          <span className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border whitespace-nowrap ${chip[st.tone]}`}>
+            {st.text}
+          </span>
+        </div>
+      </li>
+    );
+  };
+
+  return (
+    <section className="bg-neutral-900/60 border border-neutral-800 rounded-2xl">
+      <button onClick={toggle} className="w-full px-5 py-4 flex items-center justify-between gap-3 text-left">
+        <div>
+          <h2 className="text-lg font-bold flex items-center gap-2">
+            <span className={`text-neutral-500 transition-transform ${open ? "rotate-90" : ""}`}>›</span>
+            Budget
+          </h2>
+          <p className="text-xs text-neutral-500">{monthName}</p>
+        </div>
+        <div className="text-right">
+          <p className="text-xs uppercase tracking-wider text-neutral-500">Free to spend</p>
+          <p className="text-lg font-bold tabular-nums">{fmt(plan.freeToSpend)}</p>
+        </div>
+      </button>
+
+      {open && (
+        <div className="px-5 pb-5 space-y-4">
+          <div>
+            <p className="text-sm text-neutral-300">
+              {plan.income > 0 ? (
+                <>
+                  Pay this month <span className="font-semibold text-white tabular-nums">{fmt(plan.income)}</span> ·
+                  needs <span className="tabular-nums">{fmt(plan.totalNeed)}</span>
+                </>
+              ) : (
+                <>
+                  No pay yet this month. Needs <span className="tabular-nums">{fmt(plan.totalNeed)}</span> — this fills
+                  in as your pay arrives.
+                </>
+              )}
+            </p>
+            <div className="mt-2 h-1.5 w-full bg-neutral-800 rounded-full overflow-hidden">
+              <div className="h-full bg-red-500 rounded-full transition-all" style={{ width: `${pctCovered * 100}%` }} />
+            </div>
+          </div>
+
+          {editing ? (
+            <BudgetEditor
+              items={items}
+              onCancel={() => setEditing(false)}
+              onSaved={(next) => {
+                onSaved(next);
+                setEditing(false);
+              }}
+            />
+          ) : (
+            <div className="grid md:grid-cols-2 gap-x-8 gap-y-2">
+              <div>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Pay first</h3>
+                {pay.length === 0 ? (
+                  <p className="text-sm text-neutral-500 italic py-2">No bills or debt minimums this month.</p>
+                ) : (
+                  <ul className="divide-y divide-neutral-800">
+                    {pay.map((l) => (
+                      <Row key={`${l.kind}-${l.id}`} l={l} />
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Essentials</h3>
+                  <button onClick={() => setEditing(true)} className="text-xs text-neutral-400 hover:text-white">
+                    {items.length ? "Edit" : "+ Add essentials"}
+                  </button>
+                </div>
+                {essentials.length === 0 ? (
+                  <p className="text-sm text-neutral-500 py-2">
+                    Add what you need each month — groceries, gas, phone — and your pay gets split across them.
+                  </p>
+                ) : (
+                  <ul className="divide-y divide-neutral-800">
+                    {essentials.map((l) => (
+                      <Row key={`${l.kind}-${l.id}`} l={l} />
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          )}
+
+          {!editing && plan.income > 0 && (
+            <div className="rounded-xl border border-neutral-800 bg-neutral-900/80 p-3 text-sm space-y-1">
+              {plan.leftover > 0 ? (
+                <>
+                  {plan.extraToDebt > 0 && plan.extraTarget && (
+                    <p>
+                      Put <span className="font-semibold text-red-300 tabular-nums">{fmt(plan.extraToDebt)}</span> extra on{" "}
+                      <span className="font-semibold">{plan.extraTarget.label}</span>
+                      <span className="text-neutral-500"> ({debtSharePct}% of what's left — set in Debt payment plan)</span>
+                    </p>
+                  )}
+                  <p>
+                    Free to spend: <span className="font-semibold text-white tabular-nums">{fmt(plan.freeToSpend)}</span>
+                  </p>
+                </>
+              ) : plan.covered < plan.totalNeed ? (
+                <p className="text-rose-300">
+                  {fmt(plan.totalNeed - plan.covered)} still needed — cover the items marked Short when your next pay lands.
+                </p>
+              ) : (
+                <p className="text-neutral-400">Everything's covered, with nothing extra left this month.</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function BudgetEditor({
+  items,
+  onCancel,
+  onSaved,
+}: {
+  items: BudgetItem[];
+  onCancel: () => void;
+  onSaved: (items: BudgetItem[]) => void;
+}) {
+  const [rows, setRows] = useState(
+    items.length
+      ? items.map((i) => ({ label: i.label, amount: String(i.amount), keywords: i.keywords ?? "" }))
+      : [{ label: "", amount: "", keywords: "" }]
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const set = (i: number, k: "label" | "amount" | "keywords", v: string) =>
+    setRows((r) => r.map((row, j) => (j === i ? { ...row, [k]: v } : row)));
+
+  async function save() {
+    setError(null);
+    const clean = rows
+      .filter((r) => r.label.trim() || r.amount.trim())
+      .map((r) => ({ label: r.label.trim(), amount: parseFloat(r.amount), keywords: r.keywords.trim() || null }));
+    if (clean.some((r) => !r.label || !Number.isFinite(r.amount) || r.amount < 0))
+      return setError("Each essential needs a name and an amount.");
+    setBusy(true);
+    const res = await fetch("/api/budget", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ items: clean }),
+    });
+    setBusy(false);
+    const body = await res.json().catch(() => null);
+    if (!res.ok) return setError(body?.error ?? "Failed to save");
+    onSaved(body.items);
+  }
+
+  const input = "px-3 py-2 rounded-lg bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none text-sm";
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-neutral-500">
+        Monthly amounts for things you need — not fixed bills (those go in Bills). Add store names to track spending
+        against each one.
+      </p>
+      {rows.map((r, i) => (
+        <div key={i} className="grid grid-cols-[1fr_6.5rem_auto] gap-2 items-start">
+          <input className={input} placeholder="Groceries" value={r.label} onChange={(e) => set(i, "label", e.target.value)} />
+          <input
+            className={`${input} tabular-nums`}
+            placeholder="400"
+            inputMode="decimal"
+            value={r.amount}
+            onChange={(e) => set(i, "amount", e.target.value)}
+          />
+          <button
+            onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}
+            aria-label={`Remove ${r.label || "essential"}`}
+            className="text-neutral-500 hover:text-rose-300 px-2 py-2"
+          >
+            ✕
+          </button>
+          <input
+            className={`${input} col-span-2 text-xs`}
+            placeholder="Store names (optional): costco, superstore"
+            value={r.keywords}
+            onChange={(e) => set(i, "keywords", e.target.value)}
+          />
+        </div>
+      ))}
+      <button
+        onClick={() => setRows((rs) => [...rs, { label: "", amount: "", keywords: "" }])}
+        className="text-sm text-neutral-400 hover:text-white"
+      >
+        + Add another
+      </button>
+      {error && <p className="text-sm text-rose-400">{error}</p>}
+      <div className="flex gap-2">
+        <button
+          onClick={save}
+          disabled={busy}
+          className="flex-1 py-2.5 rounded-xl bg-gradient-to-b from-red-500 to-red-600 hover:to-red-500 text-neutral-950 font-semibold disabled:opacity-50"
+        >
+          {busy ? "Saving…" : "Save essentials"}
+        </button>
+        <button onClick={onCancel} className="px-4 py-2.5 rounded-xl border border-neutral-700 text-sm hover:bg-neutral-800">
+          Cancel
+        </button>
       </div>
     </div>
   );
@@ -1342,7 +1753,7 @@ function StatCard({
           </button>
         )}
       </div>
-      <p className="text-2xl font-bold mt-2 tabular-nums text-white">{value}</p>
+      <p className="text-lg sm:text-2xl font-bold mt-2 tabular-nums text-white">{value}</p>
       {sub && <p className="text-xs text-neutral-400 mt-1">{sub}</p>}
     </div>
   );

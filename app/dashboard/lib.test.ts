@@ -7,6 +7,8 @@ import {
   simulatePayoff,
   buildSuggestions,
   anchorLedger,
+  planBudget,
+  matchesKeywords,
   type SimDebt,
   type Entry,
 } from "./lib";
@@ -177,5 +179,80 @@ describe("anchorLedger", () => {
     const out = anchorLedger(rows, "2026-09", 1750);
     expect(out[0]).toMatchObject({ carryIn: 1500, closing: 1600 });
     expect(out[0].closing).toBe(out[1].carryIn);
+  });
+});
+
+describe("planBudget", () => {
+  const base = {
+    bills: [
+      { id: "rent", label: "Rent", amount: 1200, paid: true },
+      { id: "hydro", label: "Hydro", amount: 80, paid: false },
+    ],
+    debts: [
+      { id: "visa", label: "Visa", balance: 460, minPayment: 45, dueDay: 25, paid: false },
+      { id: "loan", label: "Car loan", balance: 20, minPayment: 300, dueDay: 5, paid: true },
+      { id: "loc", label: "Line of credit", balance: 900, minPayment: null, dueDay: null, paid: false },
+    ],
+    essentials: [
+      { id: "groc", label: "Groceries", amount: 400, spent: 120 },
+      { id: "gas", label: "Gas", amount: 150, spent: 0 },
+    ],
+    debtSharePct: 50,
+    target: { id: "visa", label: "Visa", balance: 460 },
+  };
+  const line = (plan: ReturnType<typeof planBudget>, id: string) => plan.lines.find((l) => l.id === id)!;
+
+  it("with no pay yet, everything is still uncovered", () => {
+    const plan = planBudget({ ...base, income: 0 });
+    // Rent 1200 + hydro 80 + visa 45 + loan min capped at its 20 balance + groceries 400 + gas 150.
+    expect(plan.totalNeed).toBe(1895);
+    expect(plan.covered).toBe(0);
+    expect(plan.freeToSpend).toBe(0);
+    expect(line(plan, "hydro").short).toBe(80);
+  });
+
+  it("fills bills, then debt minimums, then essentials as pay arrives", () => {
+    const plan = planBudget({ ...base, income: 1400 }); // first paycheque
+    expect(line(plan, "rent").funded).toBe(1200);
+    expect(line(plan, "hydro").funded).toBe(80);
+    expect(line(plan, "visa").funded).toBe(45);
+    expect(line(plan, "loan").need).toBe(20); // minimum capped at what's owed
+    expect(line(plan, "groc")).toMatchObject({ funded: 55, short: 345 });
+    expect(line(plan, "gas")).toMatchObject({ funded: 0, short: 150 });
+    expect(plan.leftover).toBe(0);
+    expect(plan.extraToDebt).toBe(0);
+  });
+
+  it("splits what's left between extra on the priority debt and free money", () => {
+    const plan = planBudget({ ...base, income: 2400 });
+    expect(plan.covered).toBe(1895);
+    expect(plan.leftover).toBe(505);
+    // 50% of 505, but never more than Visa still owes after its minimum (460 - 45 = 415).
+    expect(plan.extraToDebt).toBe(252.5);
+    expect(plan.freeToSpend).toBe(252.5);
+    expect(plan.extraTarget).toEqual({ id: "visa", label: "Visa" });
+  });
+
+  it("caps the extra at what the priority debt still owes", () => {
+    const plan = planBudget({ ...base, income: 5000, debtSharePct: 100 });
+    expect(plan.extraToDebt).toBe(415);
+    expect(plan.freeToSpend).toBe(cents(5000 - 1895 - 415));
+  });
+
+  it("flags debts without a minimum payment", () => {
+    const plan = planBudget({ ...base, income: 0 });
+    expect(line(plan, "loc")).toMatchObject({ need: 0, noMinimum: true });
+  });
+});
+
+const cents = (n: number) => Math.round(n * 100) / 100;
+
+describe("matchesKeywords", () => {
+  it("matches any comma-separated keyword, ignoring case and spaces", () => {
+    expect(matchesKeywords("SUPERSTORE #1520 TORONTO", "costco, superstore")).toBe(true);
+    expect(matchesKeywords("Costco Wholesale", " COSTCO ")).toBe(true);
+    expect(matchesKeywords("TIM HORTONS", "costco, superstore")).toBe(false);
+    expect(matchesKeywords("anything", null)).toBe(false);
+    expect(matchesKeywords("anything", " , ")).toBe(false);
   });
 });

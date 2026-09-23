@@ -11,9 +11,14 @@ export default async function DashboardPage() {
   const userId = session.user.id;
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { currency: true, balanceAdjustment: true },
+    select: { currency: true, balanceAdjustment: true, debtSharePct: true },
   });
   const bank = await getBankBalance(userId);
+  const budgetItems = await prisma.budgetItem.findMany({
+    where: { userId },
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+    select: { id: true, label: true, amount: true, keywords: true },
+  });
   const entries = await prisma.entry.findMany({
     where: { userId },
     orderBy: { createdAt: "desc" },
@@ -45,6 +50,8 @@ export default async function DashboardPage() {
       userCurrency={user?.currency ?? "USD"}
       userBalanceAdjustment={user?.balanceAdjustment ?? 0}
       initialBank={bank}
+      initialBudgetItems={budgetItems}
+      userDebtSharePct={user?.debtSharePct ?? 50}
     />
   );
 }
