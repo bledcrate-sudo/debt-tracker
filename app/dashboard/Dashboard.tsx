@@ -32,6 +32,8 @@ import {
   type BankBalance,
   type BudgetItem,
   type BudgetPlan,
+  planSavingsGoal,
+  type SavingsGoal,
 } from "./lib";
 import { IMPORT_NOTE } from "@/lib/constants";
 import { CATEGORIES, type Category } from "@/lib/categorize";
@@ -820,6 +822,8 @@ export default function Dashboard({
         debtSharePct={payoutPct}
         onSaved={setBudgetItems}
       />
+
+      <SavingsGoalsSection className={phoneShow(phoneTab === "home")} freeToSpend={budget.freeToSpend} />
 
       <RecurringSection
         className={phoneShow(phoneTab === "home")}
@@ -2387,6 +2391,312 @@ function BudgetEditor({
         </button>
       </div>
     </div>
+  );
+}
+
+// Fetches and owns its own goals (like Subscriptions/RecurringSection),
+// rather than threading them through Dashboard's already-long prop list —
+// the only thing it needs from outside is this month's free-to-spend, so
+// its advice always agrees with the Budget section and "Should I buy it?".
+function SavingsGoalsSection({ className = "", freeToSpend }: { className?: string; freeToSpend: number }) {
+  const fmt = useContext(CurrencyContext);
+  const [open, toggle] = usePersistentToggle("dt.goals.open", true);
+  const [goals, setGoals] = useState<SavingsGoal[] | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/goals")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => !cancelled && setGoals(data))
+      .catch(() => !cancelled && setGoals([]));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function createGoal(input: { name: string; targetAmount: number; targetDate: string | null }) {
+    setError(null);
+    const r = await fetch("/api/goals", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    const body = await r.json().catch(() => null);
+    if (!r.ok) {
+      setError(body?.error ?? "Failed to add goal");
+      return false;
+    }
+    setGoals((cur) => [...(cur ?? []), body]);
+    setAdding(false);
+    return true;
+  }
+
+  async function patchGoal(id: string, patch: Record<string, unknown>) {
+    setError(null);
+    const r = await fetch(`/api/goals/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    const body = await r.json().catch(() => null);
+    if (!r.ok) {
+      setError(body?.error ?? "Failed to save goal");
+      return false;
+    }
+    setGoals((cur) => (cur ?? []).map((g) => (g.id === id ? body : g)));
+    return true;
+  }
+
+  async function deleteGoal(id: string) {
+    if (!confirm("Delete this savings goal?")) return;
+    const prev = goals;
+    setGoals((cur) => (cur ?? []).filter((g) => g.id !== id));
+    const r = await fetch(`/api/goals/${id}`, { method: "DELETE" });
+    if (!r.ok) setGoals(prev ?? null);
+  }
+
+  const plans = (goals ?? []).map((g) => planSavingsGoal(g, freeToSpend));
+  const totalRemaining = plans.reduce((s, p) => s + p.remaining, 0);
+
+  return (
+    <section className={`bg-neutral-900/60 border border-neutral-800 rounded-2xl ${className}`}>
+      <button onClick={toggle} className="w-full px-4 md:px-5 py-3 md:py-4 flex items-center justify-between gap-3 text-left">
+        <div>
+          <h2 className="text-lg font-bold flex items-center gap-2">
+            <span className={`text-neutral-500 transition-transform ${open ? "rotate-90" : ""}`}>›</span>
+            Savings goals
+          </h2>
+          <p className="text-xs text-neutral-500">
+            {plans.length === 0 ? "Nothing set up yet" : `${plans.filter((p) => !p.done).length} in progress`}
+          </p>
+        </div>
+        {totalRemaining > 0 && (
+          <div className="text-right">
+            <p className="text-xs uppercase tracking-wider text-neutral-500">Left to save</p>
+            <p className="text-lg font-bold tabular-nums">{fmt(totalRemaining)}</p>
+          </div>
+        )}
+      </button>
+
+      {open && (
+        <div className="px-5 pb-5 space-y-3">
+          {goals === null ? (
+            <p className="text-sm text-neutral-500 italic py-2">Loading…</p>
+          ) : plans.length === 0 && !adding ? (
+            <p className="text-sm text-neutral-500 py-2">
+              Add something you're saving toward — a trip, an emergency fund, a down payment — and this works out how
+              much to set aside each month from what your budget actually leaves free.
+            </p>
+          ) : (
+            <ul className="divide-y divide-neutral-800">
+              {plans.map((p) => (
+                <GoalRow
+                  key={p.id}
+                  plan={p}
+                  fmt={fmt}
+                  onContribute={(amount) => patchGoal(p.id, { addSaved: amount })}
+                  onSave={(patch) => patchGoal(p.id, patch)}
+                  onDelete={() => deleteGoal(p.id)}
+                />
+              ))}
+            </ul>
+          )}
+
+          {error && <p className="text-sm text-rose-400">{error}</p>}
+
+          {adding ? (
+            <GoalForm onCancel={() => setAdding(false)} onSave={createGoal} />
+          ) : (
+            <button onClick={() => setAdding(true)} className="text-sm text-neutral-400 hover:text-white">
+              + Add a goal
+            </button>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function GoalForm({
+  initial,
+  onCancel,
+  onSave,
+}: {
+  initial?: { name: string; targetAmount: number; targetDate: string | null };
+  onCancel: () => void;
+  onSave: (input: { name: string; targetAmount: number; targetDate: string | null }) => Promise<boolean>;
+}) {
+  const [name, setName] = useState(initial?.name ?? "");
+  const [targetAmount, setTargetAmount] = useState(initial ? String(initial.targetAmount) : "");
+  const [targetDate, setTargetDate] = useState(initial?.targetDate ? initial.targetDate.slice(0, 10) : "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const input = "px-3 py-2 rounded-lg bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none text-sm";
+
+  async function save() {
+    const amount = parseFloat(targetAmount);
+    if (!name.trim() || !Number.isFinite(amount) || amount <= 0) {
+      setError("A goal needs a name and a target amount.");
+      return;
+    }
+    setBusy(true);
+    const ok = await onSave({ name: name.trim(), targetAmount: amount, targetDate: targetDate || null });
+    setBusy(false);
+    if (!ok) setError("Failed to save — try again.");
+  }
+
+  return (
+    <div className="space-y-2 rounded-xl border border-neutral-800 bg-neutral-900/80 p-3">
+      <div className="grid grid-cols-[1fr_7rem] gap-2">
+        <input className={input} placeholder="Goal name (e.g. Emergency fund)" value={name} onChange={(e) => setName(e.target.value)} />
+        <input
+          className={`${input} tabular-nums`}
+          placeholder="Target"
+          inputMode="decimal"
+          value={targetAmount}
+          onChange={(e) => setTargetAmount(e.target.value)}
+        />
+      </div>
+      <div>
+        <label className="block text-xs text-neutral-500 mb-1">Target date (optional)</label>
+        <input
+          type="date"
+          className={`${input} w-full`}
+          value={targetDate}
+          onChange={(e) => setTargetDate(e.target.value)}
+        />
+      </div>
+      {error && <p className="text-sm text-rose-400">{error}</p>}
+      <div className="flex gap-2">
+        <button
+          onClick={save}
+          disabled={busy}
+          className="flex-1 py-2 rounded-lg bg-gradient-to-b from-red-500 to-red-600 hover:to-red-500 text-neutral-950 text-sm font-semibold disabled:opacity-50"
+        >
+          {busy ? "Saving…" : "Save goal"}
+        </button>
+        <button onClick={onCancel} className="px-4 py-2 rounded-lg border border-neutral-700 text-sm hover:bg-neutral-800">
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function GoalRow({
+  plan,
+  fmt,
+  onContribute,
+  onSave,
+  onDelete,
+}: {
+  plan: ReturnType<typeof planSavingsGoal>;
+  fmt: Formatter;
+  onContribute: (amount: number) => Promise<boolean>;
+  onSave: (patch: { name: string; targetAmount: number; targetDate: string | null }) => Promise<boolean>;
+  onDelete: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [addingMoney, setAddingMoney] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  if (editing) {
+    return (
+      <li className="py-3">
+        <GoalForm
+          initial={{ name: plan.name, targetAmount: plan.targetAmount, targetDate: plan.targetDate }}
+          onCancel={() => setEditing(false)}
+          onSave={async (input) => {
+            const ok = await onSave(input);
+            if (ok) setEditing(false);
+            return ok;
+          }}
+        />
+      </li>
+    );
+  }
+
+  const paceLine = plan.done
+    ? "🎉 Goal reached"
+    : plan.requiredMonthly != null
+    ? `Save ${fmt(plan.requiredMonthly)}/mo to hit it${plan.monthsLeft === 1 ? " this month" : ` in ~${plan.monthsLeft} months`}`
+    : plan.projectedDate
+    ? `At today's free-to-spend pace, you'd hit it by ${new Date(plan.projectedDate).toLocaleDateString(undefined, { month: "long", year: "numeric" })}`
+    : "Add a target date, or free up some monthly money, to get a pace";
+
+  const chip =
+    plan.done
+      ? "bg-neutral-500/15 text-neutral-200 border-neutral-500/30"
+      : plan.fitsFreeToSpend === false
+      ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
+      : plan.fitsFreeToSpend === true
+      ? "bg-neutral-500/15 text-neutral-200 border-neutral-500/30"
+      : "bg-neutral-800 text-neutral-500 border-neutral-700";
+
+  async function submitContribution() {
+    const n = parseFloat(amount);
+    if (!Number.isFinite(n) || n === 0) return;
+    setBusy(true);
+    const ok = await onContribute(n);
+    setBusy(false);
+    if (ok) {
+      setAmount("");
+      setAddingMoney(false);
+    }
+  }
+
+  return (
+    <li className="py-3 space-y-2">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-medium break-words">{plan.name}</p>
+          <p className="text-xs text-neutral-500">
+            {fmt(plan.savedAmount)} of {fmt(plan.targetAmount)} saved · {plan.progressPct.toFixed(0)}%
+          </p>
+        </div>
+        <div className="flex items-center gap-1 shrink-0 text-neutral-500">
+          <button onClick={() => setAddingMoney((v) => !v)} className="px-2 py-1 text-xs hover:text-white" title="Add money">
+            + Add
+          </button>
+          <button onClick={() => setEditing(true)} className="px-2 py-1 text-xs hover:text-white" title="Edit goal">
+            Edit
+          </button>
+          <button onClick={onDelete} className="px-2 py-1 text-xs hover:text-rose-300" title="Delete goal">
+            ✕
+          </button>
+        </div>
+      </div>
+
+      <div className="h-1.5 w-full bg-neutral-800 rounded-full overflow-hidden">
+        <div className="h-full bg-red-500 rounded-full transition-all" style={{ width: `${plan.progressPct}%` }} />
+      </div>
+
+      <span className={`inline-block text-xs px-2 py-1 rounded border ${chip}`}>{paceLine}</span>
+
+      {addingMoney && (
+        <div className="flex gap-2 pt-1">
+          <input
+            autoFocus
+            className="flex-1 px-3 py-1.5 rounded-lg bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none text-sm tabular-nums"
+            placeholder="Amount saved (e.g. 50)"
+            inputMode="decimal"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submitContribution()}
+          />
+          <button
+            onClick={submitContribution}
+            disabled={busy}
+            className="px-3 py-1.5 rounded-lg bg-red-500 text-neutral-950 text-sm font-semibold disabled:opacity-50"
+          >
+            Add
+          </button>
+        </div>
+      )}
+    </li>
   );
 }
 

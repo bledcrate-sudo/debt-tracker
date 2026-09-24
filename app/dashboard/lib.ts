@@ -563,3 +563,73 @@ export function shouldBuy(
     ],
   };
 }
+
+// ---- Savings goals ----------------------------------------------------
+
+export type SavingsGoal = {
+  id: string;
+  name: string;
+  targetAmount: number;
+  savedAmount: number;
+  targetDate: string | null; // ISO date, or null for no deadline
+};
+
+export type SavingsGoalPlan = SavingsGoal & {
+  remaining: number; // targetAmount - savedAmount, floored at 0
+  progressPct: number; // 0-100
+  done: boolean;
+  monthsLeft: number | null; // whole months until targetDate; null without one
+  requiredMonthly: number | null; // remaining / monthsLeft; null without a target date (or once done)
+  fitsFreeToSpend: boolean | null; // requiredMonthly <= this month's free-to-spend; null when requiredMonthly is null
+  projectedDate: string | null; // no target date only: when it's hit at the current free-to-spend pace
+};
+
+// Whole months between today and a target date, counting the current month
+// as 1 so a goal due later this month still asks for a real contribution
+// now instead of dividing by zero. A date already in the past also clamps
+// to 1 — "you need it now."
+export function monthsUntil(targetDate: Date, today = new Date()): number {
+  const months =
+    (targetDate.getFullYear() - today.getFullYear()) * 12 + (targetDate.getMonth() - today.getMonth());
+  return Math.max(1, months + (targetDate.getDate() >= today.getDate() ? 1 : 0));
+}
+
+// A goal's targetDate is a plain calendar date (from a date input), stored
+// and returned as UTC midnight. Reading it back with local getters would
+// shift it a day earlier for anyone west of UTC — turn it into a Date built
+// from those same Y/M/D numbers in local time instead, so the calendar date
+// a user picked is the calendar date the math uses, wherever they are.
+function calendarDate(iso: string): Date {
+  const d = new Date(iso);
+  return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
+// How much a goal needs saved each month to hit its target on time, and
+// whether that fits what this month's budget actually leaves free — the
+// same free-to-spend figure the Budget section and "Should I buy it?" use,
+// pulled straight from planBudget, so the advice always agrees. Without a
+// target date, the goal is judged against the current free-to-spend pace
+// instead and given a projected completion date.
+export function planSavingsGoal(goal: SavingsGoal, freeToSpend: number, today = new Date()): SavingsGoalPlan {
+  const remaining = cents(Math.max(0, goal.targetAmount - goal.savedAmount));
+  const done = remaining <= 0;
+  const progressPct = goal.targetAmount > 0 ? Math.min(100, (goal.savedAmount / goal.targetAmount) * 100) : 0;
+  const free = Math.max(0, freeToSpend);
+
+  let monthsLeft: number | null = null;
+  let requiredMonthly: number | null = null;
+  let fitsFreeToSpend: boolean | null = null;
+  let projectedDate: string | null = null;
+
+  if (!done && goal.targetDate) {
+    monthsLeft = monthsUntil(calendarDate(goal.targetDate), today);
+    requiredMonthly = cents(remaining / monthsLeft);
+    fitsFreeToSpend = requiredMonthly <= free;
+  } else if (!done && free > 0) {
+    const months = Math.ceil(remaining / free);
+    const by = new Date(today.getFullYear(), today.getMonth() + months, 1);
+    projectedDate = by.toISOString();
+  }
+
+  return { ...goal, remaining, progressPct, done, monthsLeft, requiredMonthly, fitsFreeToSpend, projectedDate };
+}

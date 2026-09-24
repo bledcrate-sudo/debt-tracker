@@ -113,6 +113,11 @@ Settings → Bank always still works on demand either way.
   buy now, with the reasons: whether it fits this month's free money, whether it would eat the
   extra debt payment or leave bills short, when you could afford it (from your usual free money
   and next payday, estimated from past pay dates), and what it costs your debt payoff.
+- **Savings goals** — set a target amount and, optionally, a date (a trip, an emergency fund, a
+  down payment). With a date, it works out the monthly amount that gets you there on time and
+  flags whether that fits this month's actual free-to-spend money from the Budget section.
+  Without one, it projects when you'll hit it at your current free-to-spend pace instead. Log
+  money saved with one tap; progress and the required pace update immediately.
 - **All transactions** — one feed of every transaction from every connected bank and account
   (Plaid and SimpleFIN together), grouped by day, each tagged with its bank · account and whether
   it's Income, Spent, Moves or a Transfer between your own accounts, with a per-bank filter, a

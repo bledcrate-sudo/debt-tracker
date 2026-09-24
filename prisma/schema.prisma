@@ -22,6 +22,7 @@ model User {
   plaidItems PlaidItem[]
   simplefinConnections SimplefinConnection[]
   budgetItems BudgetItem[]
+  savingsGoals SavingsGoal[]
   bankTransactions BankTransaction[]
   // Share (%) of money left after bills, debt minimums and essentials that
   // goes to extra debt payments; the rest is free to spend. Shared by the
@@ -222,6 +223,23 @@ model BudgetItem {
   keywords  String? // comma-separated, matched case-insensitively
   sortOrder Int      @default(0)
   createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// A savings target (vacation, emergency fund, a down payment...). Progress
+// is tracked by hand (savedAmount) rather than tied to a bank account, since
+// the money for it isn't necessarily set apart anywhere the app can see.
+model SavingsGoal {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String
+  targetAmount Float
+  savedAmount  Float     @default(0)
+  targetDate   DateTime? // optional deadline; without one, progress is judged against current free-to-spend pace
+  sortOrder    Int       @default(0)
+  createdAt    DateTime  @default(now())
 
   @@index([userId])
 }
