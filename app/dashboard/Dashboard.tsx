@@ -37,6 +37,7 @@ import {
 } from "./lib";
 import { IMPORT_NOTE } from "@/lib/constants";
 import { CATEGORIES, type Category } from "@/lib/categorize";
+import { estimatePaycheck, PAY_PERIODS, type PayFrequency } from "@/lib/paycheck";
 
 // Provided by Dashboard so every subcomponent formats in the signed-in user's
 // currency without threading a prop through each one; the default here only
@@ -294,6 +295,18 @@ export default function Dashboard({
   // So the Subscriptions card can tell which detected charges already have
   // a matching Bill, and offer "Add as Bill" only for the rest.
   const billLabels = useMemo(() => new Set(expenses.map((e) => e.label.trim().toLowerCase())), [expenses]);
+  // Payday estimate from past one-off pay deposits (bank-imported pay is
+  // one-off income entries), and the most recent one, for the Paycheck card.
+  const nextPay = useMemo(
+    () => nextPayDate(income.filter((e) => e.frequency !== "monthly").map((e) => new Date(e.createdAt))),
+    [income]
+  );
+  const lastPay = useMemo(() => {
+    const last = income
+      .filter((e) => e.frequency !== "monthly")
+      .reduce<Entry | null>((a, e) => (!a || new Date(e.createdAt) > new Date(a.createdAt) ? e : a), null);
+    return last ? { amount: last.amount, date: new Date(last.createdAt) } : null;
+  }, [income]);
   const purchases = useMemo(() => entries.filter((e) => e.type === "purchase"), [entries]);
   // Money moving in/out that's neither earned nor spent (e-transfers,
   // refunds, card payments). sourceKind holds the direction: "in" | "out".
@@ -540,7 +553,7 @@ export default function Dashboard({
         cash: ledger[ledger.length - 1]?.closing ?? 0,
         upcomingNeeds,
         monthlyFree,
-        nextPay: nextPayDate(income.filter((e) => e.frequency !== "monthly").map((e) => new Date(e.createdAt))),
+        nextPay,
         debtCost,
       },
       fmt
@@ -813,6 +826,8 @@ export default function Dashboard({
         </span>
         <span className="text-neutral-500 text-lg">›</span>
       </button>
+
+      <PaycheckSection className={phoneShow(phoneTab === "home")} nextPay={nextPay} lastPay={lastPay} />
 
       <BudgetSection
         className={phoneShow(phoneTab === "home")}
@@ -2398,6 +2413,257 @@ function BudgetEditor({
 // rather than threading them through Dashboard's already-long prop list —
 // the only thing it needs from outside is this month's free-to-spend, so
 // its advice always agrees with the Budget section and "Should I buy it?".
+// Paycheck calculator: hourly wage, overtime wage and hours for the pay
+// period in, estimated net cheque out, with Yellowknife (NWT) deductions —
+// federal + territorial income tax, CPP/CPP2, EI and the NWT 2% payroll tax
+// (lib/paycheck.ts). Inputs are saved to the account as they're typed.
+const FREQUENCY_LABEL: Record<PayFrequency, string> = {
+  weekly: "Weekly",
+  biweekly: "Biweekly",
+  semimonthly: "2× a month",
+  monthly: "Monthly",
+};
+
+function PaycheckSection({
+  className = "",
+  nextPay,
+  lastPay,
+}: {
+  className?: string;
+  nextPay: Date | null;
+  lastPay: { amount: number; date: Date } | null;
+}) {
+  const fmt = useContext(CurrencyContext);
+  const [open, toggle] = usePersistentToggle("dt.paycheck.open", true);
+  const [loaded, setLoaded] = useState(false);
+  const [f, setF] = useState({
+    hourlyRate: "",
+    overtimeRate: "",
+    regularHours: "",
+    overtimeHours: "",
+    payFrequency: "biweekly" as PayFrequency,
+    ytdGross: "",
+    otherDeductions: "",
+    northernDeduction: false,
+  });
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/paycheck")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((p) => {
+        if (cancelled) return;
+        if (p) {
+          const str = (n: number | null) => (n ? String(n) : "");
+          setF({
+            hourlyRate: str(p.hourlyRate),
+            overtimeRate: str(p.overtimeRate),
+            regularHours: str(p.regularHours),
+            overtimeHours: str(p.overtimeHours),
+            payFrequency: p.payFrequency in PAY_PERIODS ? p.payFrequency : "biweekly",
+            ytdGross: str(p.ytdGross),
+            otherDeductions: str(p.otherDeductions),
+            northernDeduction: !!p.northernDeduction,
+          });
+        }
+        setLoaded(true);
+      })
+      .catch(() => !cancelled && setLoaded(true));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const num = (s: string) => {
+    const n = parseFloat(s.replace(/[,$\s]/g, ""));
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  };
+  const hourly = num(f.hourlyRate);
+  // Blank overtime wage → time-and-a-half, the NWT standard.
+  const overtimeRate = f.overtimeRate.trim() ? num(f.overtimeRate) : hourly * 1.5;
+  const est = estimatePaycheck({
+    hourlyRate: hourly,
+    overtimeRate,
+    regularHours: num(f.regularHours),
+    overtimeHours: num(f.overtimeHours),
+    payFrequency: f.payFrequency,
+    ytdGross: f.ytdGross.trim() ? num(f.ytdGross) : null,
+    otherDeductions: num(f.otherDeductions),
+    northernDeduction: f.northernDeduction,
+  });
+
+  // Save shortly after the last change (only once the saved values loaded,
+  // so the empty initial form never overwrites them).
+  const firstRun = useRef(true);
+  useEffect(() => {
+    if (!loaded) return;
+    if (firstRun.current) {
+      firstRun.current = false;
+      return;
+    }
+    setSaveState("saving");
+    const t = setTimeout(async () => {
+      const r = await fetch("/api/paycheck", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          hourlyRate: hourly,
+          overtimeRate: f.overtimeRate.trim() ? num(f.overtimeRate) : 0,
+          regularHours: num(f.regularHours),
+          overtimeHours: num(f.overtimeHours),
+          payFrequency: f.payFrequency,
+          ytdGross: f.ytdGross.trim() ? num(f.ytdGross) : null,
+          otherDeductions: num(f.otherDeductions),
+          northernDeduction: f.northernDeduction,
+        }),
+      }).catch(() => null);
+      setSaveState(r?.ok ? "saved" : "error");
+    }, 700);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [f, loaded]);
+
+  const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF((cur) => ({ ...cur, [k]: e.target.value }));
+  const input = "w-full px-3 py-2 rounded-lg bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none text-sm tabular-nums";
+  const field = (label: string, k: keyof typeof f, placeholder: string, prefix?: string) => (
+    <label className="block">
+      <span className="block text-xs text-neutral-500 mb-1">{label}</span>
+      <span className="relative block">
+        {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-neutral-500">{prefix}</span>}
+        <input
+          className={`${input} ${prefix ? "pl-6" : ""}`}
+          inputMode="decimal"
+          placeholder={placeholder}
+          value={f[k] as string}
+          onChange={set(k)}
+        />
+      </span>
+    </label>
+  );
+  const dateLabel = (d: Date) => d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  const hasPay = est.gross > 0;
+  const row = (label: string, amount: number, sub?: string) =>
+    amount > 0 && (
+      <li className="flex items-baseline justify-between gap-3 py-1.5">
+        <span className="text-neutral-400">
+          {label}
+          {sub && <span className="block text-[11px] text-neutral-600">{sub}</span>}
+        </span>
+        <span className="tabular-nums text-rose-300">−{fmt(amount)}</span>
+      </li>
+    );
+
+  return (
+    <section className={`bg-neutral-900/60 border border-neutral-800 rounded-2xl ${className}`}>
+      <button onClick={toggle} className="w-full px-4 md:px-5 py-3 md:py-4 flex items-center justify-between gap-3 text-left">
+        <div className="min-w-0">
+          <h2 className="text-lg font-bold flex items-center gap-2">
+            <span className={`text-neutral-500 transition-transform ${open ? "rotate-90" : ""}`}>›</span>
+            Paycheck
+          </h2>
+          <p className="text-xs text-neutral-500">
+            {hasPay ? (nextPay ? `Next payday ${dateLabel(nextPay)}` : "Estimated next cheque") : "Enter your wage and hours"}
+          </p>
+        </div>
+        {hasPay && (
+          <div className="text-right">
+            <p className="text-xs uppercase tracking-wider text-neutral-500">Take-home</p>
+            <p className="text-lg font-bold tabular-nums">{fmt(est.net)}</p>
+          </div>
+        )}
+      </button>
+
+      {open && (
+        <div className="px-4 md:px-5 pb-5 space-y-4">
+          <div className="grid grid-cols-2 gap-2">
+            {field("Hourly wage", "hourlyRate", "0.00", "$")}
+            {field("Overtime wage", "overtimeRate", hourly ? (hourly * 1.5).toFixed(2) : "1.5× hourly", "$")}
+            {field("Regular hours", "regularHours", "e.g. 80")}
+            {field("Overtime hours", "overtimeHours", "0")}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className="block text-xs text-neutral-500 mb-1">Paid</span>
+              <select className={input} value={f.payFrequency} onChange={set("payFrequency")}>
+                {(Object.keys(PAY_PERIODS) as PayFrequency[]).map((k) => (
+                  <option key={k} value={k}>
+                    {FREQUENCY_LABEL[k]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {field("Earned so far this year", "ytdGross", "from last stub", "$")}
+          </div>
+          <div className="grid grid-cols-2 gap-2 items-end">
+            {field("Other deductions", "otherDeductions", "benefits, dues", "$")}
+            <label className="flex items-center gap-2 text-xs text-neutral-400 pb-2.5">
+              <input
+                type="checkbox"
+                className="w-4 h-4 accent-red-500"
+                checked={f.northernDeduction}
+                onChange={(e) => setF((cur) => ({ ...cur, northernDeduction: e.target.checked }))}
+              />
+              Northern residents deduction on my TD1
+            </label>
+          </div>
+
+          {hasPay && (
+            <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 px-4 py-3 text-sm">
+              <ul className="divide-y divide-neutral-800/70">
+                <li className="flex items-baseline justify-between gap-3 py-1.5">
+                  <span className="text-neutral-300">
+                    Gross pay
+                    <span className="block text-[11px] text-neutral-600">
+                      {fmt(est.regularPay)} regular{est.overtimePay > 0 ? ` + ${fmt(est.overtimePay)} overtime` : ""}
+                    </span>
+                  </span>
+                  <span className="tabular-nums font-semibold">{fmt(est.gross)}</span>
+                </li>
+                {row("Federal income tax", est.federalTax)}
+                {row("NWT income tax", est.territorialTax)}
+                {row("CPP", est.cpp, "5.95%")}
+                {row("CPP2", est.cpp2, "4% above $74,600 for the year")}
+                {row("EI", est.ei, "1.63%")}
+                {row("NWT payroll tax", est.payrollTax, "2% of gross")}
+                {row("Other deductions", est.other)}
+                <li className="flex items-baseline justify-between gap-3 pt-2.5">
+                  <span className="font-semibold">Take-home</span>
+                  <span className="tabular-nums text-lg font-bold">{fmt(est.net)}</span>
+                </li>
+              </ul>
+              <p className="mt-2 text-[11px] text-neutral-500 tabular-nums">
+                {Math.round((est.totalDeductions / est.gross) * 100)}% of gross goes to deductions
+                {lastPay ? ` · last pay deposit ${fmt(lastPay.amount)} on ${dateLabel(lastPay.date)}` : ""}
+              </p>
+            </div>
+          )}
+
+          <div className="space-y-1 text-[11px] text-neutral-500">
+            {(est.cppMaxed || est.eiMaxed) && (
+              <p>
+                You've hit this year's {est.cppMaxed && est.eiMaxed ? "CPP and EI" : est.cppMaxed ? "CPP" : "EI"} maximum, so it
+                stops coming off until January.
+              </p>
+            )}
+            {hasPay && !f.ytdGross.trim() && (
+              <p>
+                Tip: add "earned so far this year" from your last pay stub. CPP and EI stop once you reach their yearly maximums
+                (EI at $68,900, CPP at $74,600), and the estimate can account for it.
+              </p>
+            )}
+            <p>
+              Estimate using the CRA's 2026 payroll formulas for Yellowknife, NWT. Your real stub can differ slightly with your
+              TD1 claims, benefits and employer setup.{" "}
+              {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved." : saveState === "error" ? "Couldn't save." : ""}
+            </p>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function SavingsGoalsSection({ className = "", freeToSpend }: { className?: string; freeToSpend: number }) {
   const fmt = useContext(CurrencyContext);
   const [open, toggle] = usePersistentToggle("dt.goals.open", true);

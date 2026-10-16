@@ -118,6 +118,13 @@ Settings → Bank always still works on demand either way.
   flags whether that fits this month's actual free-to-spend money from the Budget section.
   Without one, it projects when you'll hit it at your current free-to-spend pace instead. Log
   money saved with one tap; progress and the required pace update immediately.
+- **Paycheck** — enter your hourly wage, overtime wage (blank = time-and-a-half) and the hours of
+  each for the pay period, and it estimates the take-home cheque for Yellowknife, NWT: federal and
+  NWT income tax, CPP/CPP2, EI and the NWT 2% payroll tax, using the CRA's 2026 payroll formulas
+  (T4127), shown against the next payday detected from your past pay deposits. Optional: year-to-
+  date gross (so CPP/EI stop at their yearly maximums), after-tax deductions, and the northern
+  residents deduction claimed on your TD1. Inputs save to your account. Rates live in
+  `lib/paycheck.ts`; update them each January.
 - **All transactions** — one feed of every transaction from every connected bank and account
   (Plaid and SimpleFIN together), grouped by day, each tagged with its bank · account and whether
   it's Income, Spent, Moves or a Transfer between your own accounts, with a per-bank filter, a

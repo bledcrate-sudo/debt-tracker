@@ -23,6 +23,7 @@ model User {
   simplefinConnections SimplefinConnection[]
   budgetItems BudgetItem[]
   savingsGoals SavingsGoal[]
+  paycheckProfile PaycheckProfile?
   bankTransactions BankTransaction[]
   // Share (%) of money left after bills, debt minimums and essentials that
   // goes to extra debt payments; the rest is free to spend. Shared by the
@@ -242,6 +243,24 @@ model SavingsGoal {
   createdAt    DateTime  @default(now())
 
   @@index([userId])
+}
+
+// Inputs for the paycheck calculator, one row per user (hours are per pay
+// period). Taxes follow Northwest Territories (Yellowknife) payroll rules;
+// see lib/paycheck.ts.
+model PaycheckProfile {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hourlyRate        Float    @default(0)
+  overtimeRate      Float    @default(0)
+  regularHours      Float    @default(0)
+  overtimeHours     Float    @default(0)
+  payFrequency      String   @default("biweekly") // weekly | biweekly | semimonthly | monthly
+  ytdGross          Float? // year-to-date gross from the last pay stub, so CPP/EI stop at their maximums
+  otherDeductions   Float    @default(0) // per cheque, after tax (benefits, union dues…)
+  northernDeduction Boolean  @default(false) // northern residents deduction claimed on the TD1
+  updatedAt         DateTime @updatedAt
 }
 
 // Every transaction the bank importers saw, across all connected banks and
