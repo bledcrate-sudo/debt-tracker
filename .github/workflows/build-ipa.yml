@@ -45,6 +45,15 @@ jobs:
           echo "--- generated icons ---"
           ls -1 ios/App/App/Assets.xcassets/AppIcon.appiconset | head -20
 
+      # The home-screen widget (WidgetKit extension) isn't part of Capacitor's
+      # template, so it's added to the generated Xcode project here, before
+      # CocoaPods integrates the project. See ios-extras/add-widget.rb.
+      - name: Add home-screen widget
+        run: |
+          set -eo pipefail
+          gem list -i xcodeproj >/dev/null || gem install xcodeproj --no-document || sudo gem install xcodeproj --no-document
+          ruby ios-extras/add-widget.rb
+
       - name: Resolve SPM packages
         working-directory: ios/App
         run: |
@@ -82,6 +91,10 @@ jobs:
           set -eo pipefail
           APP_PATH=$(find build/App.xcarchive/Products/Applications -maxdepth 1 -name "*.app" -type d | head -1)
           echo "Using app: $APP_PATH"
+          if [ ! -d "$APP_PATH/PlugIns/DebtyWidget.appex" ]; then
+            echo "::error::DebtyWidget.appex is missing from the app"; exit 1
+          fi
+          echo "Widget embedded: $(ls "$APP_PATH/PlugIns")"
           mkdir -p build/Payload
           cp -R "$APP_PATH" build/Payload/
           cd build && zip -qr Debty-unsigned.ipa Payload

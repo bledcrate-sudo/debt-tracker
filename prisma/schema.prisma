@@ -24,6 +24,8 @@ model User {
   budgetItems BudgetItem[]
   savingsGoals SavingsGoal[]
   paycheckProfile PaycheckProfile?
+  debtChallenge DebtChallenge?
+  widgetDevices WidgetDevice[]
   bankTransactions BankTransaction[]
   // Share (%) of money left after bills, debt minimums and essentials that
   // goes to extra debt payments; the rest is free to spend. Shared by the
@@ -261,6 +263,39 @@ model PaycheckProfile {
   otherDeductions   Float    @default(0) // per cheque, after tax (benefits, union dues…)
   northernDeduction Boolean  @default(false) // northern residents deduction claimed on the TD1
   updatedAt         DateTime @updatedAt
+}
+
+// The debt-free challenge: a committed monthly amount toward all debts and
+// the countdown to the payoff date it gives (lib/debt-challenge.ts).
+model DebtChallenge {
+  id            String    @id @default(cuid())
+  userId        String    @unique
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  monthlyAmount Float
+  strategy      String    @default("avalanche") // avalanche | snowball
+  payDay        Int       @default(1) // day of the month the payment goes out, 1–28
+  startDebt     Float // total owed when the challenge started
+  targetDate    String? // "YYYY-MM-DD" debt-free date promised at the start / last change of plan
+  startedAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+// An iPhone home-screen widget. The widget makes its own random key, shows a
+// short pairing code until the user enters it in the app, then reads the
+// challenge countdown with that key — no app-to-widget data sharing needed,
+// so it works however the app is signed. Only a hash of the key is stored.
+model WidgetDevice {
+  id                String    @id @default(cuid())
+  keyHash           String    @unique
+  userId            String?
+  user              User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pairCode          String?   @unique
+  pairCodeExpiresAt DateTime?
+  linkedAt          DateTime?
+  lastSeenAt        DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([userId])
 }
 
 // Every transaction the bank importers saw, across all connected banks and

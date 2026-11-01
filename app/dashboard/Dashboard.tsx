@@ -38,6 +38,7 @@ import {
 import { IMPORT_NOTE } from "@/lib/constants";
 import { CATEGORIES, type Category } from "@/lib/categorize";
 import { estimatePaycheck, PAY_PERIODS, type PayFrequency } from "@/lib/paycheck";
+import { planChallenge, todayIn, type ChallengeDebt, type ChallengeSettings, type Strategy } from "@/lib/debt-challenge";
 
 // Provided by Dashboard so every subcomponent formats in the signed-in user's
 // currency without threading a prop through each one; the default here only
@@ -346,6 +347,10 @@ export default function Dashboard({
   const sumBy = (arr: Entry[], pred?: (e: Entry) => boolean) =>
     arr.reduce((s, e) => s + (!pred || pred(e) ? e.amount : 0), 0);
   const totalDebt = useMemo(() => sumBy(debts), [debts]);
+  const challengeDebts = useMemo<ChallengeDebt[]>(
+    () => debts.map((d) => ({ id: d.id, label: d.label, balance: d.amount, apr: d.apr ?? null, minPayment: d.minPayment ?? null })),
+    [debts]
+  );
 
   // Month-by-month ledger. Each month starts with whatever was left over
   // from the previous one, so unspent money carries forward instead of
@@ -845,6 +850,12 @@ export default function Dashboard({
         version={feedVersion}
         existingBillLabels={billLabels}
         onAddBill={addEntry}
+      />
+
+      <DebtChallengeSection
+        className={phoneShow(phoneTab === "debt")}
+        debts={challengeDebts}
+        suggestedMonthly={Math.ceil(totalMinPayments + monthlyToDebt)}
       />
 
       {milestone && (
@@ -2413,6 +2424,405 @@ function BudgetEditor({
 // rather than threading them through Dashboard's already-long prop list —
 // the only thing it needs from outside is this month's free-to-spend, so
 // its advice always agrees with the Budget section and "Should I buy it?".
+// The debt-free challenge: all debts (bank-synced and manual) paid down with
+// a committed monthly amount, counted down in days to the payoff date
+// (lib/debt-challenge.ts). The iPhone home-screen widget shows the same
+// countdown once linked here with the code it displays.
+function DebtChallengeSection({
+  className = "",
+  debts,
+  suggestedMonthly,
+}: {
+  className?: string;
+  debts: ChallengeDebt[];
+  suggestedMonthly: number;
+}) {
+  const fmt = useContext(CurrencyContext);
+  const [loaded, setLoaded] = useState(false);
+  const [challenge, setChallenge] = useState<(ChallengeSettings & { startedAt: string }) | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [monthly, setMonthly] = useState("");
+  const [payDay, setPayDay] = useState(1);
+  const [strategy, setStrategy] = useState<Strategy>("avalanche");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const today = todayIn();
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/challenge?today=${todayIn()}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelled) return;
+        setChallenge(d?.challenge ?? null);
+        setLoaded(true);
+      })
+      .catch(() => !cancelled && setLoaded(true));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const totalDebt = debts.reduce((s, d) => s + Math.max(0, d.balance), 0);
+  const openDebts = debts.filter((d) => d.balance > 0.005).length;
+
+  function startEditing() {
+    setMonthly(String(challenge?.monthlyAmount ?? (suggestedMonthly > 0 ? suggestedMonthly : "")));
+    setPayDay(challenge?.payDay ?? Math.min(28, new Date().getDate()));
+    setStrategy(challenge?.strategy ?? "avalanche");
+    setError(null);
+    setEditing(true);
+  }
+
+  const monthlyNum = parseFloat(monthly.replace(/[,$\s]/g, ""));
+  const preview =
+    editing && Number.isFinite(monthlyNum) && monthlyNum > 0
+      ? planChallenge(
+          debts,
+          { monthlyAmount: monthlyNum, strategy, payDay, startDebt: challenge?.startDebt ?? totalDebt, targetDate: null },
+          today
+        )
+      : null;
+  const result = challenge && !editing ? planChallenge(debts, challenge, today) : null;
+
+  async function save() {
+    if (!Number.isFinite(monthlyNum) || monthlyNum <= 0) return setError("Enter how much you'll put toward debt each month");
+    setBusy(true);
+    setError(null);
+    const r = await fetch("/api/challenge", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ monthlyAmount: monthlyNum, strategy, payDay, today }),
+    });
+    const body = await r.json().catch(() => null);
+    setBusy(false);
+    if (!r.ok) return setError(body?.error ?? "Couldn't save the challenge");
+    setChallenge(body.challenge);
+    setEditing(false);
+  }
+
+  async function endChallenge() {
+    if (!confirm("End the debt-free challenge? Starting again later counts progress from that day.")) return;
+    const r = await fetch("/api/challenge", { method: "DELETE" });
+    if (r.ok) {
+      setChallenge(null);
+      setEditing(false);
+    }
+  }
+
+  const longDate = (d: string) =>
+    new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+  const shortDate = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { month: "short", year: "numeric" });
+  const ordinal = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th"}`;
+
+  if (!loaded) return null;
+  if (!challenge && openDebts === 0 && !editing) return null; // nothing to pay off
+
+  return (
+    <section className={`bg-neutral-900/60 border border-red-500/30 rounded-2xl overflow-hidden ${className}`}>
+      <div className="h-1 bg-gradient-to-r from-red-600 to-rose-400" />
+      <div className="px-4 md:px-5 py-4 space-y-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-bold">Debt-free challenge</h2>
+            <p className="text-xs text-neutral-500">
+              {openDebts} debt{openDebts === 1 ? "" : "s"} · {fmt(totalDebt)} owed, kept up to date from your accounts
+            </p>
+          </div>
+          {challenge && !editing && (
+            <button onClick={startEditing} className="text-sm text-neutral-400 hover:text-white shrink-0">
+              Edit
+            </button>
+          )}
+        </div>
+
+        {editing || !challenge ? (
+          !editing ? (
+            <div className="space-y-3">
+              <p className="text-sm text-neutral-400">
+                Commit an amount to put toward all your debt each month. You'll get your debt-free date and a countdown — and
+                a home-screen widget that shows how many days are left.
+              </p>
+              <button
+                onClick={startEditing}
+                className="w-full py-2.5 rounded-xl bg-gradient-to-b from-red-500 to-red-600 hover:to-red-500 text-neutral-950 font-semibold"
+              >
+                Start the challenge
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="grid grid-cols-[1fr_auto] gap-2 items-end">
+                <label className="block">
+                  <span className="block text-xs text-neutral-500 mb-1">I'll put this toward debt every month</span>
+                  <span className="relative block">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-neutral-500">$</span>
+                    <input
+                      className="w-full pl-6 pr-3 py-2 rounded-lg bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none text-sm tabular-nums"
+                      inputMode="decimal"
+                      value={monthly}
+                      onChange={(e) => setMonthly(e.target.value)}
+                      placeholder={suggestedMonthly > 0 ? String(suggestedMonthly) : "0"}
+                    />
+                  </span>
+                </label>
+                <label className="block">
+                  <span className="block text-xs text-neutral-500 mb-1">Paid on the</span>
+                  <select
+                    className="px-3 py-2 rounded-lg bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none text-sm"
+                    value={payDay}
+                    onChange={(e) => setPayDay(Number(e.target.value))}
+                  >
+                    {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
+                      <option key={d} value={d}>
+                        {ordinal(d)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="flex gap-1.5 text-xs">
+                {(["avalanche", "snowball"] as Strategy[]).map((k) => (
+                  <button
+                    key={k}
+                    onClick={() => setStrategy(k)}
+                    className={`flex-1 px-3 py-2 rounded-lg border ${
+                      strategy === k ? "bg-red-500/15 border-red-500/40 text-white" : "border-neutral-700 text-neutral-400"
+                    }`}
+                  >
+                    <span className="font-semibold">{k === "avalanche" ? "Avalanche" : "Snowball"}</span>
+                    <span className="block text-[11px] text-neutral-500">
+                      {k === "avalanche" ? "Highest interest first — least interest" : "Smallest balance first — quick wins"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              {preview && (
+                <p className="text-sm text-neutral-300">
+                  {preview.debtFreeDate ? (
+                    <>
+                      Debt-free <span className="font-semibold text-white">{longDate(preview.debtFreeDate)}</span> —{" "}
+                      <span className="font-semibold text-white tabular-nums">{preview.daysLeft?.toLocaleString()} days</span>
+                      {preview.totalInterest ? ` · ${fmt(preview.totalInterest)} interest along the way` : ""}
+                    </>
+                  ) : (
+                    <span className="text-rose-400">That doesn't cover the interest, so the debt would never be paid off.</span>
+                  )}
+                </p>
+              )}
+              {preview?.belowMinimums && (
+                <p className="text-xs text-rose-400">Your minimum payments add up to {fmt(preview.totalMin)}/mo — commit at least that.</p>
+              )}
+              {error && <p className="text-sm text-rose-400">{error}</p>}
+              <div className="flex gap-2">
+                <button
+                  onClick={save}
+                  disabled={busy}
+                  className="flex-1 py-2 rounded-lg bg-gradient-to-b from-red-500 to-red-600 hover:to-red-500 text-neutral-950 text-sm font-semibold disabled:opacity-50"
+                >
+                  {busy ? "Saving…" : challenge ? "Save changes" : "Start"}
+                </button>
+                <button onClick={() => setEditing(false)} className="px-4 py-2 rounded-lg border border-neutral-700 text-sm hover:bg-neutral-800">
+                  Cancel
+                </button>
+              </div>
+              {challenge && (
+                <p className="text-[11px] text-neutral-500">
+                  Changing the plan resets the date you're measured against; progress still counts from when you started.
+                </p>
+              )}
+            </div>
+          )
+        ) : result?.done ? (
+          <div className="text-center py-4">
+            <p className="text-4xl">🎉</p>
+            <p className="text-xl font-bold mt-2">You're debt-free!</p>
+            <p className="text-sm text-neutral-400">{fmt(challenge.startDebt)} paid off since you started.</p>
+          </div>
+        ) : result ? (
+          <div className="space-y-4">
+            <div className="flex items-end gap-3">
+              <p className="text-6xl font-black tabular-nums leading-none text-white">
+                {result.daysLeft === null ? "∞" : result.daysLeft.toLocaleString()}
+              </p>
+              <div className="pb-1">
+                <p className="font-semibold leading-tight">days to debt-free</p>
+                <p className="text-xs text-neutral-400">
+                  {result.debtFreeDate ? longDate(result.debtFreeDate) : "Not at this amount"}
+                </p>
+              </div>
+            </div>
+            <div>
+              <div className="h-2.5 rounded-full bg-neutral-800 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-red-600 to-rose-400"
+                  style={{ width: `${Math.round(result.progress * 100)}%` }}
+                />
+              </div>
+              <p className="mt-1.5 text-xs text-neutral-400 tabular-nums">
+                {fmt(result.paidOff)} paid off of {fmt(challenge.startDebt)} ({Math.round(result.progress * 100)}%) since{" "}
+                {new Date(challenge.startedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2 text-xs">
+              {result.daysAhead !== null && (
+                <span
+                  className={`px-2 py-1 rounded-full border ${
+                    result.daysAhead > 0
+                      ? "bg-red-500/15 border-red-500/40 text-red-200"
+                      : result.daysAhead < 0
+                      ? "bg-neutral-800 border-neutral-600 text-neutral-300"
+                      : "bg-neutral-800 border-neutral-700 text-neutral-300"
+                  }`}
+                >
+                  {result.daysAhead > 0
+                    ? `${result.daysAhead} days ahead of schedule`
+                    : result.daysAhead < 0
+                    ? `${-result.daysAhead} days behind schedule`
+                    : "On schedule"}
+                </span>
+              )}
+              <span className="px-2 py-1 rounded-full border border-neutral-700 text-neutral-300">
+                {fmt(challenge.monthlyAmount)}/mo on the {ordinal(challenge.payDay)}
+              </span>
+              <span className="px-2 py-1 rounded-full border border-neutral-700 text-neutral-300">
+                Next payment {new Date(`${result.nextPaymentDate}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+              </span>
+            </div>
+            {result.belowMinimums && (
+              <p className="text-xs text-rose-400">
+                Your minimum payments add up to {fmt(result.totalMin)}/mo, more than your {fmt(challenge.monthlyAmount)} commitment.
+              </p>
+            )}
+            {result.order.length > 1 && (
+              <div>
+                <p className="text-xs uppercase tracking-wider text-neutral-500 mb-1">
+                  Payoff order ({challenge.strategy === "avalanche" ? "highest interest first" : "smallest first"})
+                </p>
+                <ol className="space-y-1 text-sm">
+                  {result.order.map((d, i) => (
+                    <li key={d.id} className="flex items-baseline justify-between gap-3">
+                      <span className="min-w-0 truncate text-neutral-300">
+                        <span className="text-neutral-600 tabular-nums">{i + 1}.</span> {d.label}
+                      </span>
+                      <span className="shrink-0 text-xs text-neutral-400 tabular-nums">
+                        {d.payoffDate ? `paid off ${shortDate(d.payoffDate)}` : "—"}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+            <WidgetLinkPanel />
+            <button onClick={endChallenge} className="text-xs text-neutral-500 hover:text-neutral-300">
+              End challenge
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+// Links an iPhone home-screen widget: the widget shows a 6-digit code until
+// it's typed in here.
+function WidgetLinkPanel() {
+  const [open, toggle] = usePersistentToggle("dt.widget.open", false);
+  const [devices, setDevices] = useState<{ id: string; linkedAt: string | null; lastSeenAt: string | null }[]>([]);
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const load = () =>
+    fetch("/api/widget/devices")
+      .then((r) => (r.ok ? r.json() : []))
+      .then(setDevices)
+      .catch(() => {});
+  useEffect(() => {
+    load();
+  }, []);
+
+  async function link() {
+    setBusy(true);
+    setMsg(null);
+    const r = await fetch("/api/widget/link", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    const body = await r.json().catch(() => null);
+    setBusy(false);
+    if (!r.ok) return setMsg({ ok: false, text: body?.error ?? "Couldn't link the widget" });
+    setCode("");
+    setMsg({ ok: true, text: "Linked! The widget shows your countdown within a few minutes." });
+    load();
+  }
+
+  async function unlink(id: string) {
+    if (!confirm("Unlink this widget? It'll go back to showing a pairing code.")) return;
+    await fetch(`/api/widget/devices?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    load();
+  }
+
+  return (
+    <div className="rounded-xl border border-neutral-800 bg-neutral-950/40">
+      <button onClick={toggle} className="w-full px-3 py-2.5 flex items-center justify-between text-left text-sm">
+        <span className="flex items-center gap-2">
+          <span className={`text-neutral-500 transition-transform ${open ? "rotate-90" : ""}`}>›</span>
+          Home screen widget
+        </span>
+        <span className="text-xs text-neutral-500">{devices.length ? `${devices.length} linked` : "Not set up"}</span>
+      </button>
+      {open && (
+        <div className="px-3 pb-3 space-y-3 text-sm">
+          <ol className="list-decimal list-inside space-y-1 text-xs text-neutral-400">
+            <li>On your home screen, touch and hold an empty spot until the apps jiggle.</li>
+            <li>Tap <span className="text-neutral-200">Edit</span> → <span className="text-neutral-200">Add Widget</span>, search for <span className="text-neutral-200">Debty</span>, pick a size and tap <span className="text-neutral-200">Add Widget</span>.</li>
+            <li>The widget shows a 6-digit code — type it below.</li>
+          </ol>
+          <div className="flex gap-2">
+            <input
+              className="flex-1 min-w-0 px-3 py-2 rounded-lg bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none text-sm tabular-nums tracking-widest"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={7}
+              placeholder="123 456"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+            />
+            <button
+              onClick={link}
+              disabled={busy || code.replace(/\D/g, "").length !== 6}
+              className="px-4 py-2 rounded-lg bg-gradient-to-b from-red-500 to-red-600 text-neutral-950 font-semibold disabled:opacity-40"
+            >
+              {busy ? "Linking…" : "Link"}
+            </button>
+          </div>
+          {msg && <p className={`text-xs ${msg.ok ? "text-neutral-300" : "text-rose-400"}`}>{msg.text}</p>}
+          {devices.length > 0 && (
+            <ul className="divide-y divide-neutral-800 text-xs">
+              {devices.map((d, i) => (
+                <li key={d.id} className="flex items-center justify-between gap-2 py-1.5">
+                  <span className="text-neutral-400">
+                    Widget {i + 1}
+                    {d.lastSeenAt
+                      ? ` · updated ${new Date(d.lastSeenAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`
+                      : " · waiting for first update"}
+                  </span>
+                  <button onClick={() => unlink(d.id)} className="text-neutral-500 hover:text-rose-300">
+                    Unlink
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="text-[11px] text-neutral-500">Needs the latest Debty app (version with the widget) installed on your iPhone.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Paycheck calculator: hourly wage, overtime wage and hours for the pay
 // period in, estimated net cheque out, with Yellowknife (NWT) deductions —
 // federal + territorial income tax, CPP/CPP2, EI and the NWT 2% payroll tax
