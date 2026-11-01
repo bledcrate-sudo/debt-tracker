@@ -1308,6 +1308,7 @@ export default function Dashboard({
       {settingsOpen && (
         <SettingsModal
           currency={currency}
+          userEmail={userEmail}
           onClose={() => setSettingsOpen(false)}
           onSaved={(code) => {
             setCurrency(code);
@@ -3957,11 +3958,13 @@ function AdjustBalanceModal({
 
 function SettingsModal({
   currency,
+  userEmail,
   onClose,
   onSaved,
   onBanksChanged,
 }: {
   currency: string;
+  userEmail: string;
   onClose: () => void;
   onSaved: (code: string) => void;
   onBanksChanged: () => void;
@@ -4041,8 +4044,15 @@ function SettingsModal({
         className="bg-neutral-900 border border-neutral-800 rounded-t-2xl sm:rounded-2xl w-full max-w-md shadow-2xl flex flex-col max-h-[90dvh] pb-[env(safe-area-inset-bottom)] sm:pb-0"
       >
         <div className="p-6 pb-3 shrink-0">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xl font-bold">Settings</h2>
+          <div className="flex items-start justify-between gap-3 mb-3">
+            <div className="min-w-0">
+              <h2 className="text-xl font-bold">Settings</h2>
+              {userEmail && (
+                <p className="text-xs text-neutral-500 mt-0.5 break-all">
+                  Signed in as <span className="text-neutral-300">{userEmail}</span>
+                </p>
+              )}
+            </div>
             <div className="flex items-center gap-2">
               {/* Phones have no header Sign out button; it lives here instead. */}
               <button
