@@ -118,16 +118,20 @@ Settings → Bank always still works on demand either way.
   flags whether that fits this month's actual free-to-spend money from the Budget section.
   Without one, it projects when you'll hit it at your current free-to-spend pace instead. Log
   money saved with one tap; progress and the required pace update immediately.
-- **Debt-free challenge** (Debt tab) — every debt, bank-synced cards and loans included, paid down
-  with a monthly amount you commit to on a day of the month you pick. Shows the countdown in days
+- **Debt-free challenge** (Debt tab) — set how much you owe yourself (and its interest rate) and log
+  each payment as you make it, or use every debt from your accounts, bank-synced cards and loans
+  included, which update as your banks sync. Either way it's paid down with a monthly amount you
+  commit to on a day of the month you pick. Shows the countdown in days
   to your debt-free date, progress since you started, whether you're ahead or behind the date you
   started with, and each debt's payoff month (avalanche or snowball). The countdown only moves when
   a payment lands, so it drops by one every day in between.
 - **iPhone widget** — home-screen (small, medium) and lock-screen widgets showing the days left.
   The widget fetches the countdown from the server itself rather than through data shared with the
   app (an App Group, which re-signing a sideloaded app may drop): it shows a 6-digit code until you
-  enter it in Debt-free challenge → Home screen widget. Sources in `ios-extras/`; the IPA workflow
-  adds it to the generated Xcode project.
+  enter it in Debt-free challenge → Home screen widget. It checks back about every 15 minutes (iOS
+  rations widget refreshes), and the app tells it to refresh immediately whenever you log a payment
+  or change the challenge (a small native plugin, `ios-extras/App/`). Sources in `ios-extras/`; the
+  IPA workflow adds them to the generated Xcode project.
 - **Paycheck** — enter your hourly wage, overtime wage (blank = time-and-a-half) and the hours of
   each for the pay period, and it estimates the take-home cheque for Yellowknife, NWT: federal and
   NWT income tax, CPP/CPP2, EI and the NWT 2% payroll tax, using the CRA's 2026 payroll formulas

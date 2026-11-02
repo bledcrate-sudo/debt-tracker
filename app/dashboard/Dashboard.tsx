@@ -38,7 +38,17 @@ import {
 import { IMPORT_NOTE } from "@/lib/constants";
 import { CATEGORIES, type Category } from "@/lib/categorize";
 import { estimatePaycheck, PAY_PERIODS, type PayFrequency } from "@/lib/paycheck";
-import { planChallenge, todayIn, type ChallengeDebt, type ChallengeSettings, type Strategy } from "@/lib/debt-challenge";
+import {
+  planChallenge,
+  todayIn,
+  challengeDebtList,
+  weightedApr,
+  type ChallengeDebt,
+  type ChallengePayment,
+  type DebtSource,
+  type Strategy,
+} from "@/lib/debt-challenge";
+import { reloadWidget } from "@/lib/widget-reload";
 
 // Provided by Dashboard so every subcomponent formats in the signed-in user's
 // currency without threading a prop through each one; the default here only
@@ -2425,13 +2435,27 @@ function BudgetEditor({
 // rather than threading them through Dashboard's already-long prop list —
 // the only thing it needs from outside is this month's free-to-spend, so
 // its advice always agrees with the Budget section and "Should I buy it?".
-// The debt-free challenge: all debts (bank-synced and manual) paid down with
-// a committed monthly amount, counted down in days to the payoff date
-// (lib/debt-challenge.ts). The iPhone home-screen widget shows the same
-// countdown once linked here with the code it displays.
+// The debt-free challenge: debt paid down with a committed monthly amount,
+// counted down in days to the payoff date (lib/debt-challenge.ts). The debt
+// is either every debt from the accounts (bank-synced and manual entries),
+// or one balance the user sets themselves and pays down by logging payments
+// here. The iPhone home-screen widget shows the same countdown once linked
+// with the code it displays, and is told to refresh whenever it changes.
+type ChallengeState = {
+  monthlyAmount: number;
+  strategy: Strategy;
+  payDay: number;
+  startDebt: number;
+  targetDate: string | null;
+  debtSource: DebtSource;
+  manualDebt: number | null;
+  manualApr: number | null;
+  startedAt: string;
+};
+
 function DebtChallengeSection({
   className = "",
-  debts,
+  debts: accountDebts,
   suggestedMonthly,
 }: {
   className?: string;
@@ -2440,14 +2464,29 @@ function DebtChallengeSection({
 }) {
   const fmt = useContext(CurrencyContext);
   const [loaded, setLoaded] = useState(false);
-  const [challenge, setChallenge] = useState<(ChallengeSettings & { startedAt: string }) | null>(null);
+  const [challenge, setChallenge] = useState<ChallengeState | null>(null);
+  const [payments, setPayments] = useState<ChallengePayment[]>([]);
   const [editing, setEditing] = useState(false);
-  const [monthly, setMonthly] = useState("");
-  const [payDay, setPayDay] = useState(1);
-  const [strategy, setStrategy] = useState<Strategy>("avalanche");
+  const [form, setForm] = useState({
+    monthly: "",
+    payDay: 1,
+    strategy: "avalanche" as Strategy,
+    source: "manual" as DebtSource,
+    manualDebt: "",
+    manualApr: "",
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [payAmount, setPayAmount] = useState("");
+  const [payDate, setPayDate] = useState("");
+  const [payBusy, setPayBusy] = useState(false);
+  const [allPayments, setAllPayments] = useState(false);
   const today = todayIn();
+
+  const apply = (d: { challenge: ChallengeState | null; payments?: ChallengePayment[] } | null) => {
+    setChallenge(d?.challenge ?? null);
+    setPayments(d?.payments ?? []);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -2455,8 +2494,10 @@ function DebtChallengeSection({
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (cancelled) return;
-        setChallenge(d?.challenge ?? null);
+        apply(d);
         setLoaded(true);
+        // Opening the app is a good moment to bring the widget up to date.
+        if (d?.challenge) reloadWidget();
       })
       .catch(() => !cancelled && setLoaded(true));
     return () => {
@@ -2464,60 +2505,134 @@ function DebtChallengeSection({
     };
   }, []);
 
-  const totalDebt = debts.reduce((s, d) => s + Math.max(0, d.balance), 0);
-  const openDebts = debts.filter((d) => d.balance > 0.005).length;
+  const num = (s: string) => parseFloat(s.replace(/[,$%\s]/g, ""));
+  const accountTotal = accountDebts.reduce((s, d) => s + Math.max(0, d.balance), 0);
+  const accountCount = accountDebts.filter((d) => d.balance > 0.005).length;
+  const debtsFor = (source: DebtSource, manualDebt: number | null, manualApr: number | null) =>
+    challengeDebtList(source, accountDebts, { amount: manualDebt, apr: manualApr, payments });
 
   function startEditing() {
-    setMonthly(String(challenge?.monthlyAmount ?? (suggestedMonthly > 0 ? suggestedMonthly : "")));
-    setPayDay(challenge?.payDay ?? Math.min(28, new Date().getDate()));
-    setStrategy(challenge?.strategy ?? "avalanche");
+    const apr = weightedApr(accountDebts);
+    setForm({
+      monthly: String(challenge?.monthlyAmount ?? (suggestedMonthly > 0 ? suggestedMonthly : "")),
+      payDay: challenge?.payDay ?? Math.min(28, new Date().getDate()),
+      strategy: challenge?.strategy ?? "avalanche",
+      source: challenge?.debtSource ?? "manual",
+      manualDebt: String(challenge?.manualDebt ?? (accountTotal > 0 ? Math.round(accountTotal * 100) / 100 : "")),
+      manualApr: challenge?.manualApr != null ? String(challenge.manualApr) : apr != null ? String(apr) : "",
+    });
     setError(null);
     setEditing(true);
   }
 
-  const monthlyNum = parseFloat(monthly.replace(/[,$\s]/g, ""));
+  const monthlyNum = num(form.monthly);
+  const formManualDebt = num(form.manualDebt);
+  const formManualApr = form.manualApr.trim() ? num(form.manualApr) : null;
   const preview =
-    editing && Number.isFinite(monthlyNum) && monthlyNum > 0
+    editing && Number.isFinite(monthlyNum) && monthlyNum > 0 && (form.source === "accounts" || formManualDebt > 0)
       ? planChallenge(
-          debts,
-          { monthlyAmount: monthlyNum, strategy, payDay, startDebt: challenge?.startDebt ?? totalDebt, targetDate: null },
+          debtsFor(form.source, formManualDebt, formManualApr),
+          {
+            monthlyAmount: monthlyNum,
+            strategy: form.strategy,
+            payDay: form.payDay,
+            startDebt: form.source === "manual" ? formManualDebt : challenge?.startDebt ?? accountTotal,
+            targetDate: null,
+          },
           today
         )
       : null;
+  const debts = challenge ? debtsFor(challenge.debtSource, challenge.manualDebt, challenge.manualApr) : accountDebts;
   const result = challenge && !editing ? planChallenge(debts, challenge, today) : null;
+  const isManual = challenge?.debtSource === "manual";
 
   async function save() {
     if (!Number.isFinite(monthlyNum) || monthlyNum <= 0) return setError("Enter how much you'll put toward debt each month");
+    if (form.source === "manual" && !(formManualDebt > 0)) return setError("Enter how much you owe");
+    if (formManualApr !== null && !(formManualApr >= 0 && formManualApr <= 100)) return setError("Interest should be between 0 and 100%");
     setBusy(true);
     setError(null);
     const r = await fetch("/api/challenge", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ monthlyAmount: monthlyNum, strategy, payDay, today }),
+      body: JSON.stringify({
+        monthlyAmount: monthlyNum,
+        strategy: form.strategy,
+        payDay: form.payDay,
+        debtSource: form.source,
+        manualDebt: form.source === "manual" ? formManualDebt : null,
+        manualApr: form.source === "manual" ? formManualApr : null,
+        today,
+      }),
     });
     const body = await r.json().catch(() => null);
     setBusy(false);
     if (!r.ok) return setError(body?.error ?? "Couldn't save the challenge");
-    setChallenge(body.challenge);
+    apply(body);
     setEditing(false);
+    reloadWidget();
+  }
+
+  async function logPayment() {
+    const amount = num(payAmount);
+    if (!(amount > 0)) return setError("Enter the amount you paid");
+    setPayBusy(true);
+    setError(null);
+    const r = await fetch("/api/challenge/payments", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ amount, paidAt: payDate || today, today }),
+    });
+    const body = await r.json().catch(() => null);
+    setPayBusy(false);
+    if (!r.ok) return setError(body?.error ?? "Couldn't log the payment");
+    apply(body);
+    setPayAmount("");
+    setPayDate("");
+    reloadWidget();
+  }
+
+  async function removePayment(id: string) {
+    if (!confirm("Remove this payment?")) return;
+    const r = await fetch(`/api/challenge/payments?id=${encodeURIComponent(id)}&today=${today}`, { method: "DELETE" });
+    if (r.ok) {
+      apply(await r.json());
+      reloadWidget();
+    }
   }
 
   async function endChallenge() {
-    if (!confirm("End the debt-free challenge? Starting again later counts progress from that day.")) return;
+    if (!confirm("End the debt-free challenge? Logged payments are removed, and starting again later counts progress from that day.")) return;
     const r = await fetch("/api/challenge", { method: "DELETE" });
     if (r.ok) {
-      setChallenge(null);
+      apply(null);
       setEditing(false);
+      reloadWidget();
     }
   }
 
   const longDate = (d: string) =>
     new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
   const shortDate = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { month: "short", year: "numeric" });
+  const dayMonth = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
   const ordinal = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th"}`;
+  const input = "w-full px-3 py-2 rounded-lg bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none text-sm tabular-nums";
+  const money = (value: string, onChange: (v: string) => void, placeholder: string) => (
+    <span className="relative block">
+      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-neutral-500">$</span>
+      <input className={`${input} pl-6`} inputMode="decimal" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} />
+    </span>
+  );
 
   if (!loaded) return null;
-  if (!challenge && openDebts === 0 && !editing) return null; // nothing to pay off
+
+  const subtitle = !challenge
+    ? accountCount > 0
+      ? `${accountCount} debt${accountCount === 1 ? "" : "s"} · ${fmt(accountTotal)} in your accounts`
+      : "Set your debt and a monthly payment"
+    : isManual
+    ? `${fmt(result?.totalDebt ?? 0)} left of the ${fmt(challenge.manualDebt ?? 0)} you set`
+    : `${accountCount} debt${accountCount === 1 ? "" : "s"} · ${fmt(accountTotal)} owed, kept up to date from your accounts`;
 
   return (
     <section className={`bg-neutral-900/60 border border-red-500/30 rounded-2xl overflow-hidden ${className}`}>
@@ -2526,9 +2641,7 @@ function DebtChallengeSection({
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-bold">Debt-free challenge</h2>
-            <p className="text-xs text-neutral-500">
-              {openDebts} debt{openDebts === 1 ? "" : "s"} · {fmt(totalDebt)} owed, kept up to date from your accounts
-            </p>
+            <p className="text-xs text-neutral-500">{subtitle}</p>
           </div>
           {challenge && !editing && (
             <button onClick={startEditing} className="text-sm text-neutral-400 hover:text-white shrink-0">
@@ -2537,58 +2650,86 @@ function DebtChallengeSection({
           )}
         </div>
 
-        {editing || !challenge ? (
-          !editing ? (
-            <div className="space-y-3">
-              <p className="text-sm text-neutral-400">
-                Commit an amount to put toward all your debt each month. You'll get your debt-free date and a countdown — and
-                a home-screen widget that shows how many days are left.
-              </p>
-              <button
-                onClick={startEditing}
-                className="w-full py-2.5 rounded-xl bg-gradient-to-b from-red-500 to-red-600 hover:to-red-500 text-neutral-950 font-semibold"
-              >
-                Start the challenge
-              </button>
+        {!editing && !challenge ? (
+          <div className="space-y-3">
+            <p className="text-sm text-neutral-400">
+              Set how much you owe and what you'll put toward it each month. You get your debt-free date and a countdown, log
+              payments as you make them, and a home-screen widget shows the days left.
+            </p>
+            <button
+              onClick={startEditing}
+              className="w-full py-2.5 rounded-xl bg-gradient-to-b from-red-500 to-red-600 hover:to-red-500 text-neutral-950 font-semibold"
+            >
+              Start the challenge
+            </button>
+          </div>
+        ) : editing ? (
+          <div className="space-y-3">
+            <div>
+              <span className="block text-xs text-neutral-500 mb-1">Your debt</span>
+              <div className="grid grid-cols-2 gap-1.5 text-xs">
+                {(["manual", "accounts"] as DebtSource[]).map((k) => (
+                  <button
+                    key={k}
+                    onClick={() => setForm((f) => ({ ...f, source: k }))}
+                    className={`px-3 py-2 rounded-lg border text-left ${
+                      form.source === k ? "bg-red-500/15 border-red-500/40 text-white" : "border-neutral-700 text-neutral-400"
+                    }`}
+                  >
+                    <span className="font-semibold">{k === "manual" ? "I'll set it myself" : "From my accounts"}</span>
+                    <span className="block text-[11px] text-neutral-500">
+                      {k === "manual" ? "Log payments here" : accountCount > 0 ? `${fmt(accountTotal)}, updates with bank syncs` : "No debts in your accounts yet"}
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
-          ) : (
-            <div className="space-y-3">
-              <div className="grid grid-cols-[1fr_auto] gap-2 items-end">
+            {form.source === "manual" && (
+              <div className="grid grid-cols-[1fr_7rem] gap-2">
                 <label className="block">
-                  <span className="block text-xs text-neutral-500 mb-1">I'll put this toward debt every month</span>
-                  <span className="relative block">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-neutral-500">$</span>
-                    <input
-                      className="w-full pl-6 pr-3 py-2 rounded-lg bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none text-sm tabular-nums"
-                      inputMode="decimal"
-                      value={monthly}
-                      onChange={(e) => setMonthly(e.target.value)}
-                      placeholder={suggestedMonthly > 0 ? String(suggestedMonthly) : "0"}
-                    />
-                  </span>
+                  <span className="block text-xs text-neutral-500 mb-1">How much I owe in total</span>
+                  {money(form.manualDebt, (v) => setForm((f) => ({ ...f, manualDebt: v })), "0.00")}
                 </label>
                 <label className="block">
-                  <span className="block text-xs text-neutral-500 mb-1">Paid on the</span>
-                  <select
-                    className="px-3 py-2 rounded-lg bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none text-sm"
-                    value={payDay}
-                    onChange={(e) => setPayDay(Number(e.target.value))}
-                  >
-                    {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
-                      <option key={d} value={d}>
-                        {ordinal(d)}
-                      </option>
-                    ))}
-                  </select>
+                  <span className="block text-xs text-neutral-500 mb-1">Interest % (optional)</span>
+                  <input
+                    className={input}
+                    inputMode="decimal"
+                    value={form.manualApr}
+                    onChange={(e) => setForm((f) => ({ ...f, manualApr: e.target.value }))}
+                    placeholder="e.g. 19.99"
+                  />
                 </label>
               </div>
+            )}
+            <div className="grid grid-cols-[1fr_auto] gap-2 items-end">
+              <label className="block">
+                <span className="block text-xs text-neutral-500 mb-1">I'll put this toward it every month</span>
+                {money(form.monthly, (v) => setForm((f) => ({ ...f, monthly: v })), suggestedMonthly > 0 ? String(suggestedMonthly) : "0")}
+              </label>
+              <label className="block">
+                <span className="block text-xs text-neutral-500 mb-1">Paid on the</span>
+                <select
+                  className="px-3 py-2 rounded-lg bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none text-sm"
+                  value={form.payDay}
+                  onChange={(e) => setForm((f) => ({ ...f, payDay: Number(e.target.value) }))}
+                >
+                  {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
+                    <option key={d} value={d}>
+                      {ordinal(d)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            {form.source === "accounts" && (
               <div className="flex gap-1.5 text-xs">
                 {(["avalanche", "snowball"] as Strategy[]).map((k) => (
                   <button
                     key={k}
-                    onClick={() => setStrategy(k)}
+                    onClick={() => setForm((f) => ({ ...f, strategy: k }))}
                     className={`flex-1 px-3 py-2 rounded-lg border ${
-                      strategy === k ? "bg-red-500/15 border-red-500/40 text-white" : "border-neutral-700 text-neutral-400"
+                      form.strategy === k ? "bg-red-500/15 border-red-500/40 text-white" : "border-neutral-700 text-neutral-400"
                     }`}
                   >
                     <span className="font-semibold">{k === "avalanche" ? "Avalanche" : "Snowball"}</span>
@@ -2598,49 +2739,53 @@ function DebtChallengeSection({
                   </button>
                 ))}
               </div>
-              {preview && (
-                <p className="text-sm text-neutral-300">
-                  {preview.debtFreeDate ? (
-                    <>
-                      Debt-free <span className="font-semibold text-white">{longDate(preview.debtFreeDate)}</span> —{" "}
-                      <span className="font-semibold text-white tabular-nums">{preview.daysLeft?.toLocaleString()} days</span>
-                      {preview.totalInterest ? ` · ${fmt(preview.totalInterest)} interest along the way` : ""}
-                    </>
-                  ) : (
-                    <span className="text-rose-400">That doesn't cover the interest, so the debt would never be paid off.</span>
-                  )}
-                </p>
-              )}
-              {preview?.belowMinimums && (
-                <p className="text-xs text-rose-400">Your minimum payments add up to {fmt(preview.totalMin)}/mo — commit at least that.</p>
-              )}
-              {error && <p className="text-sm text-rose-400">{error}</p>}
-              <div className="flex gap-2">
-                <button
-                  onClick={save}
-                  disabled={busy}
-                  className="flex-1 py-2 rounded-lg bg-gradient-to-b from-red-500 to-red-600 hover:to-red-500 text-neutral-950 text-sm font-semibold disabled:opacity-50"
-                >
-                  {busy ? "Saving…" : challenge ? "Save changes" : "Start"}
-                </button>
-                <button onClick={() => setEditing(false)} className="px-4 py-2 rounded-lg border border-neutral-700 text-sm hover:bg-neutral-800">
-                  Cancel
-                </button>
-              </div>
-              {challenge && (
-                <p className="text-[11px] text-neutral-500">
-                  Changing the plan resets the date you're measured against; progress still counts from when you started.
-                </p>
-              )}
+            )}
+            {preview && (
+              <p className="text-sm text-neutral-300">
+                {preview.debtFreeDate ? (
+                  <>
+                    Debt-free <span className="font-semibold text-white">{longDate(preview.debtFreeDate)}</span> —{" "}
+                    <span className="font-semibold text-white tabular-nums">{preview.daysLeft?.toLocaleString()} days</span>
+                    {preview.totalInterest ? ` · ${fmt(preview.totalInterest)} interest along the way` : ""}
+                  </>
+                ) : (
+                  <span className="text-rose-400">That doesn't cover the interest, so the debt would never be paid off.</span>
+                )}
+              </p>
+            )}
+            {preview?.belowMinimums && (
+              <p className="text-xs text-rose-400">Your minimum payments add up to {fmt(preview.totalMin)}/mo — commit at least that.</p>
+            )}
+            {error && <p className="text-sm text-rose-400">{error}</p>}
+            <div className="flex gap-2">
+              <button
+                onClick={save}
+                disabled={busy}
+                className="flex-1 py-2 rounded-lg bg-gradient-to-b from-red-500 to-red-600 hover:to-red-500 text-neutral-950 text-sm font-semibold disabled:opacity-50"
+              >
+                {busy ? "Saving…" : challenge ? "Save changes" : "Start"}
+              </button>
+              <button onClick={() => setEditing(false)} className="px-4 py-2 rounded-lg border border-neutral-700 text-sm hover:bg-neutral-800">
+                Cancel
+              </button>
             </div>
-          )
-        ) : result?.done ? (
-          <div className="text-center py-4">
-            <p className="text-4xl">🎉</p>
-            <p className="text-xl font-bold mt-2">You're debt-free!</p>
-            <p className="text-sm text-neutral-400">{fmt(challenge.startDebt)} paid off since you started.</p>
+            {challenge && (
+              <p className="text-[11px] text-neutral-500">
+                Changing the plan resets the date you're measured against.
+                {form.source === "manual" ? " Payments you've logged still come off the amount you set." : ""}
+              </p>
+            )}
           </div>
-        ) : result ? (
+        ) : result?.done ? (
+          <div className="text-center py-4 space-y-3">
+            <p className="text-4xl">🎉</p>
+            <p className="text-xl font-bold">You're debt-free!</p>
+            <p className="text-sm text-neutral-400">{fmt(challenge!.startDebt)} paid off since you started.</p>
+            <button onClick={endChallenge} className="text-xs text-neutral-500 hover:text-neutral-300">
+              Start over
+            </button>
+          </div>
+        ) : result && challenge ? (
           <div className="space-y-4">
             <div className="flex items-end gap-3">
               <p className="text-6xl font-black tabular-nums leading-none text-white">
@@ -2648,32 +2793,73 @@ function DebtChallengeSection({
               </p>
               <div className="pb-1">
                 <p className="font-semibold leading-tight">days to debt-free</p>
-                <p className="text-xs text-neutral-400">
-                  {result.debtFreeDate ? longDate(result.debtFreeDate) : "Not at this amount"}
-                </p>
+                <p className="text-xs text-neutral-400">{result.debtFreeDate ? longDate(result.debtFreeDate) : "Not at this amount"}</p>
               </div>
             </div>
             <div>
               <div className="h-2.5 rounded-full bg-neutral-800 overflow-hidden">
                 <div
-                  className="h-full rounded-full bg-gradient-to-r from-red-600 to-rose-400"
+                  className="h-full rounded-full bg-gradient-to-r from-red-600 to-rose-400 transition-all"
                   style={{ width: `${Math.round(result.progress * 100)}%` }}
                 />
               </div>
               <p className="mt-1.5 text-xs text-neutral-400 tabular-nums">
-                {fmt(result.paidOff)} paid off of {fmt(challenge.startDebt)} ({Math.round(result.progress * 100)}%) since{" "}
-                {new Date(challenge.startedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                {fmt(result.paidOff)} paid off of {fmt(challenge.startDebt)} ({Math.round(result.progress * 100)}%) ·{" "}
+                {fmt(result.totalDebt)} left
               </p>
             </div>
+
+            {isManual && (
+              <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3 space-y-2">
+                <p className="text-xs uppercase tracking-wider text-neutral-500">Log a payment</p>
+                <div className="grid grid-cols-[1fr_auto_auto] gap-2">
+                  {money(payAmount, setPayAmount, String(challenge.monthlyAmount))}
+                  <input
+                    type="date"
+                    className="px-2 py-2 rounded-lg bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none text-sm text-neutral-300 w-[8.5rem]"
+                    value={payDate || today}
+                    max={today}
+                    onChange={(e) => setPayDate(e.target.value)}
+                  />
+                  <button
+                    onClick={logPayment}
+                    disabled={payBusy || !(num(payAmount) > 0)}
+                    className="px-4 py-2 rounded-lg bg-gradient-to-b from-red-500 to-red-600 text-neutral-950 text-sm font-semibold disabled:opacity-40"
+                  >
+                    {payBusy ? "…" : "Add"}
+                  </button>
+                </div>
+                {error && <p className="text-xs text-rose-400">{error}</p>}
+                {payments.length > 0 ? (
+                  <ul className="divide-y divide-neutral-800 text-sm">
+                    {(allPayments ? payments : payments.slice(0, 4)).map((p) => (
+                      <li key={p.id} className="flex items-center justify-between gap-3 py-1.5">
+                        <span className="text-neutral-400 tabular-nums">{dayMonth(p.paidAt)}</span>
+                        <span className="flex items-center gap-3">
+                          <span className="tabular-nums font-semibold">−{fmt(p.amount)}</span>
+                          <button onClick={() => removePayment(p.id)} aria-label="Remove payment" className="text-neutral-500 hover:text-rose-300 px-1">
+                            ✕
+                          </button>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-xs text-neutral-500">No payments logged yet.</p>
+                )}
+                {payments.length > 4 && (
+                  <button onClick={() => setAllPayments((v) => !v)} className="text-xs text-neutral-400 hover:text-white">
+                    {allPayments ? "Show fewer" : `Show all ${payments.length}`}
+                  </button>
+                )}
+              </div>
+            )}
+
             <div className="flex flex-wrap gap-2 text-xs">
               {result.daysAhead !== null && (
                 <span
                   className={`px-2 py-1 rounded-full border ${
-                    result.daysAhead > 0
-                      ? "bg-red-500/15 border-red-500/40 text-red-200"
-                      : result.daysAhead < 0
-                      ? "bg-neutral-800 border-neutral-600 text-neutral-300"
-                      : "bg-neutral-800 border-neutral-700 text-neutral-300"
+                    result.daysAhead > 0 ? "bg-red-500/15 border-red-500/40 text-red-200" : "bg-neutral-800 border-neutral-700 text-neutral-300"
                   }`}
                 >
                   {result.daysAhead > 0
@@ -2687,15 +2873,18 @@ function DebtChallengeSection({
                 {fmt(challenge.monthlyAmount)}/mo on the {ordinal(challenge.payDay)}
               </span>
               <span className="px-2 py-1 rounded-full border border-neutral-700 text-neutral-300">
-                Next payment {new Date(`${result.nextPaymentDate}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                Next payment {dayMonth(result.nextPaymentDate)}
               </span>
+              {isManual && challenge.manualApr ? (
+                <span className="px-2 py-1 rounded-full border border-neutral-700 text-neutral-300">{challenge.manualApr}% interest</span>
+              ) : null}
             </div>
             {result.belowMinimums && (
               <p className="text-xs text-rose-400">
                 Your minimum payments add up to {fmt(result.totalMin)}/mo, more than your {fmt(challenge.monthlyAmount)} commitment.
               </p>
             )}
-            {result.order.length > 1 && (
+            {!isManual && result.order.length > 1 && (
               <div>
                 <p className="text-xs uppercase tracking-wider text-neutral-500 mb-1">
                   Payoff order ({challenge.strategy === "avalanche" ? "highest interest first" : "smallest first"})
@@ -2714,6 +2903,7 @@ function DebtChallengeSection({
                 </ol>
               </div>
             )}
+            {!isManual && <p className="text-[11px] text-neutral-500">Payments come off automatically when your banks sync.</p>}
             <WidgetLinkPanel />
             <button onClick={endChallenge} className="text-xs text-neutral-500 hover:text-neutral-300">
               End challenge
@@ -2755,8 +2945,9 @@ function WidgetLinkPanel() {
     setBusy(false);
     if (!r.ok) return setMsg({ ok: false, text: body?.error ?? "Couldn't link the widget" });
     setCode("");
-    setMsg({ ok: true, text: "Linked! The widget shows your countdown within a few minutes." });
+    setMsg({ ok: true, text: "Linked! Your widget will show the countdown in a moment." });
     load();
+    reloadWidget();
   }
 
   async function unlink(id: string) {

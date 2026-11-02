@@ -26,6 +26,7 @@ model User {
   paycheckProfile PaycheckProfile?
   debtChallenge DebtChallenge?
   widgetDevices WidgetDevice[]
+  challengePayments ChallengePayment[]
   bankTransactions BankTransaction[]
   // Share (%) of money left after bills, debt minimums and essentials that
   // goes to extra debt payments; the rest is free to spend. Shared by the
@@ -276,8 +277,26 @@ model DebtChallenge {
   payDay        Int       @default(1) // day of the month the payment goes out, 1–28
   startDebt     Float // total owed when the challenge started
   targetDate    String? // "YYYY-MM-DD" debt-free date promised at the start / last change of plan
+  // "accounts": the debts from the user's entries and bank sync. "manual":
+  // one balance the user set (manualDebt), paid down by ChallengePayments.
+  debtSource    String    @default("accounts")
+  manualDebt    Float?
+  manualApr     Float? // yearly interest % on the manual balance, if any
   startedAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+}
+
+// A payment logged in the debt-free challenge when the user set their debt
+// themselves (debtSource "manual").
+model ChallengePayment {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount    Float
+  paidAt    String // "YYYY-MM-DD"
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 // An iPhone home-screen widget. The widget makes its own random key, shows a

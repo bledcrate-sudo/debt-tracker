@@ -136,9 +136,11 @@ struct Provider: TimelineProvider {
                 day = next
                 entries.append(DebtEntry(date: day, status: status))
             }
-            // Waiting to be linked: check back soon. Linked: a few times a
-            // day picks up payments and balance syncs.
-            let minutes = (status?.paired ?? false) ? 180 : 10
+            // Ask to check back every 15 minutes (iOS rations widget
+            // refreshes, so it may wait longer). Payments logged in the app
+            // don't wait for this: the app tells iOS to refresh right away
+            // (ios-extras/App/WidgetReloadPlugin.swift).
+            let minutes = (status?.paired ?? false) ? 15 : 5
             let refresh = cal.date(byAdding: .minute, value: minutes, to: now) ?? now.addingTimeInterval(3600)
             completion(Timeline(entries: entries, policy: .after(refresh)))
         }

@@ -18,6 +18,31 @@ export type ChallengeDebt = {
   minPayment: number | null;
 };
 
+// Where the challenge's debt comes from: the user's accounts (entries and
+// bank sync), or one balance they set themselves and pay down by logging
+// payments in the challenge.
+export type DebtSource = "accounts" | "manual";
+export type ChallengePayment = { id: string; amount: number; paidAt: string };
+
+export function challengeDebtList(
+  source: DebtSource,
+  accountDebts: ChallengeDebt[],
+  manual: { amount: number | null; apr: number | null; payments: { amount: number }[] }
+): ChallengeDebt[] {
+  if (source !== "manual") return accountDebts;
+  const paid = manual.payments.reduce((s, p) => s + p.amount, 0);
+  return [{ id: "manual", label: "My debt", balance: Math.max(0, (manual.amount ?? 0) - paid), apr: manual.apr, minPayment: null }];
+}
+
+// Balance-weighted average APR, to suggest one when switching to a debt
+// the user sets themselves.
+export function weightedApr(debts: ChallengeDebt[]): number | null {
+  const withApr = debts.filter((d) => d.balance > 0 && d.apr != null);
+  const total = withApr.reduce((s, d) => s + d.balance, 0);
+  if (total <= 0) return null;
+  return Math.round((withApr.reduce((s, d) => s + d.balance * (d.apr ?? 0), 0) / total) * 100) / 100;
+}
+
 export type ChallengeSettings = {
   monthlyAmount: number;
   strategy: Strategy;
