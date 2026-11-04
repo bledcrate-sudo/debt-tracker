@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { estimatePaycheck, federalBpa, type PaycheckInput } from "./paycheck";
+import { estimatePaycheck, federalBpa, splitPaycheck, DEFAULT_SPLIT, type PaycheckInput } from "./paycheck";
 
 const base: PaycheckInput = {
   hourlyRate: 30,
@@ -102,5 +102,40 @@ describe("federalBpa", () => {
     expect(federalBpa(100_000)).toBe(16_452);
     expect(federalBpa(300_000)).toBe(14_829);
     expect(federalBpa((181_440 + 258_482) / 2)).toBeCloseTo((16_452 + 14_829) / 2, 0);
+  });
+});
+
+describe("splitPaycheck", () => {
+  it("splits $2,000 50/15/5/30 like the picture", () => {
+    const s = splitPaycheck(2000, DEFAULT_SPLIT);
+    expect(s.parts).toEqual({ mustHaves: 1000, retirement: 300, emergency: 100, couldHaves: 600 });
+    expect(s.placed).toBe(2000);
+    expect(s.unplaced).toBe(0);
+  });
+
+  it("places every cent even when the amount doesn't divide evenly", () => {
+    for (const amount of [1855.7, 2297.73, 0.01, 999.99, 1234.57]) {
+      const s = splitPaycheck(amount, DEFAULT_SPLIT);
+      const sum = Object.values(s.parts).reduce((a, b) => a + b, 0);
+      expect(Math.round(sum * 100)).toBe(Math.round(amount * 100));
+      expect(s.unplaced).toBe(0);
+    }
+  });
+
+  it("shows what's left to place when the percentages add up to less than 100", () => {
+    const s = splitPaycheck(1000, { mustHaves: 50, retirement: 10, emergency: 5, couldHaves: 20 });
+    expect(s.totalPct).toBe(85);
+    expect(s.placed).toBe(850);
+    expect(s.unplaced).toBe(150);
+  });
+
+  it("goes negative when they add up to more than 100", () => {
+    const s = splitPaycheck(1000, { mustHaves: 60, retirement: 15, emergency: 5, couldHaves: 30 });
+    expect(s.totalPct).toBe(110);
+    expect(s.unplaced).toBe(-100);
+  });
+
+  it("handles nothing to split", () => {
+    expect(splitPaycheck(0, DEFAULT_SPLIT).placed).toBe(0);
   });
 });

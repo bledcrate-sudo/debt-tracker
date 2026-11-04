@@ -37,7 +37,7 @@ import {
 } from "./lib";
 import { IMPORT_NOTE } from "@/lib/constants";
 import { CATEGORIES, type Category } from "@/lib/categorize";
-import { estimatePaycheck, PAY_PERIODS, type PayFrequency } from "@/lib/paycheck";
+import { estimatePaycheck, splitPaycheck, PAY_PERIODS, SPLIT_BUCKETS, DEFAULT_SPLIT, type PayFrequency, type SplitPcts } from "@/lib/paycheck";
 import {
   planChallenge,
   todayIn,
@@ -3049,6 +3049,7 @@ function PaycheckSection({
     northernDeduction: false,
   });
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [split, setSplit] = useState<SplitPcts>(DEFAULT_SPLIT);
 
   useEffect(() => {
     let cancelled = false;
@@ -3067,6 +3068,12 @@ function PaycheckSection({
             ytdGross: str(p.ytdGross),
             otherDeductions: str(p.otherDeductions),
             northernDeduction: !!p.northernDeduction,
+          });
+          setSplit({
+            mustHaves: p.splitMustHaves ?? DEFAULT_SPLIT.mustHaves,
+            retirement: p.splitRetirement ?? DEFAULT_SPLIT.retirement,
+            emergency: p.splitEmergency ?? DEFAULT_SPLIT.emergency,
+            couldHaves: p.splitCouldHaves ?? DEFAULT_SPLIT.couldHaves,
           });
         }
         setLoaded(true);
@@ -3241,6 +3248,13 @@ function PaycheckSection({
             </div>
           )}
 
+          <PaycheckSplit
+            estimate={hasPay ? est.net : null}
+            lastPay={lastPay?.amount ?? null}
+            split={split}
+            onSaved={setSplit}
+          />
+
           <div className="space-y-1 text-[11px] text-neutral-500">
             {(est.cppMaxed || est.eiMaxed) && (
               <p>
@@ -3263,6 +3277,180 @@ function PaycheckSection({
         </div>
       )}
     </section>
+  );
+}
+
+// "Split your paycheck": the take-home cheque divided into must haves,
+// retirement, emergency and could haves (50/15/5/30 unless changed), with
+// every dollar placed (lib/paycheck.ts splitPaycheck). Starts from the
+// estimated take-home above, or the last pay deposit; any amount can be
+// typed in instead.
+function PaycheckSplit({
+  estimate,
+  lastPay,
+  split,
+  onSaved,
+}: {
+  estimate: number | null;
+  lastPay: number | null;
+  split: SplitPcts;
+  onSaved: (s: SplitPcts) => void;
+}) {
+  const fmt = useContext(CurrencyContext);
+  const [typed, setTyped] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Record<keyof SplitPcts, string>>({ mustHaves: "", retirement: "", emergency: "", couldHaves: "" });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fallback = estimate ?? lastPay ?? 0;
+  const typedNum = parseFloat(typed.replace(/[,$\s]/g, ""));
+  const amount = typed.trim() && Number.isFinite(typedNum) && typedNum >= 0 ? typedNum : fallback;
+  const source = typed.trim() ? null : estimate != null ? "your estimated take-home" : lastPay != null ? "your last pay deposit" : null;
+
+  const pcts: SplitPcts = editing
+    ? {
+        mustHaves: Math.max(0, Math.round(Number(draft.mustHaves) || 0)),
+        retirement: Math.max(0, Math.round(Number(draft.retirement) || 0)),
+        emergency: Math.max(0, Math.round(Number(draft.emergency) || 0)),
+        couldHaves: Math.max(0, Math.round(Number(draft.couldHaves) || 0)),
+      }
+    : split;
+  const result = splitPaycheck(amount, pcts);
+  const maxPct = Math.max(1, ...SPLIT_BUCKETS.map((b) => pcts[b.key]));
+
+  function startEditing() {
+    setDraft({
+      mustHaves: String(split.mustHaves),
+      retirement: String(split.retirement),
+      emergency: String(split.emergency),
+      couldHaves: String(split.couldHaves),
+    });
+    setError(null);
+    setEditing(true);
+  }
+
+  async function save() {
+    if (result.totalPct !== 100) return setError("The split has to add up to 100%");
+    setBusy(true);
+    setError(null);
+    const r = await fetch("/api/paycheck/split", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(pcts),
+    });
+    const body = await r.json().catch(() => null);
+    setBusy(false);
+    if (!r.ok) return setError(body?.error ?? "Couldn't save the split");
+    onSaved(pcts);
+    setEditing(false);
+  }
+
+  const off = Math.round(Math.abs(result.unplaced) * 100) / 100;
+
+  return (
+    <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 px-4 py-3 space-y-3">
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="text-xs uppercase tracking-wider text-neutral-500">Split your paycheck</p>
+        {!editing && (
+          <button onClick={startEditing} className="text-xs text-neutral-400 hover:text-white">
+            Edit split
+          </button>
+        )}
+      </div>
+
+      <label className="block rounded-xl border-2 border-neutral-600 bg-neutral-900 px-3 py-2 focus-within:border-red-500">
+        <span className="block text-[11px] text-neutral-500">paycheck</span>
+        <span className="flex items-center gap-1">
+          <span className="text-2xl font-bold text-neutral-400">$</span>
+          <input
+            className="w-full bg-transparent outline-none text-2xl font-bold tabular-nums"
+            inputMode="decimal"
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            placeholder={fallback > 0 ? fallback.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00"}
+          />
+        </span>
+        {source && <span className="block text-[11px] text-neutral-600">{source}</span>}
+      </label>
+
+      <ul className="space-y-3">
+        {SPLIT_BUCKETS.map((b) => {
+          const p = pcts[b.key];
+          const fun = b.key === "couldHaves";
+          return (
+            <li key={b.key}>
+              <div className="flex items-baseline justify-between gap-3 mb-1">
+                <span className="font-semibold text-sm">
+                  {b.label}{" "}
+                  {editing ? (
+                    <span className="inline-flex items-center gap-0.5 align-middle">
+                      <input
+                        className="w-12 px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 focus:border-red-500 outline-none text-xs tabular-nums text-right"
+                        inputMode="numeric"
+                        value={draft[b.key]}
+                        onChange={(e) => setDraft((d) => ({ ...d, [b.key]: e.target.value.replace(/[^\d]/g, "").slice(0, 3) }))}
+                        aria-label={`${b.label} percent`}
+                      />
+                      <span className="text-xs text-neutral-500">%</span>
+                    </span>
+                  ) : (
+                    <span className="text-xs font-normal text-neutral-500">{p}%</span>
+                  )}
+                </span>
+                <span className="font-bold tabular-nums">{fmt(result.parts[b.key])}</span>
+              </div>
+              <div className="h-3 rounded-full bg-neutral-800 overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${fun ? "bg-gradient-to-r from-red-600 to-rose-400" : "bg-neutral-300"}`}
+                  style={{ width: `${Math.min(100, (p / maxPct) * 100)}%` }}
+                />
+              </div>
+              {editing && <p className="mt-0.5 text-[11px] text-neutral-500">{b.hint}</p>}
+            </li>
+          );
+        })}
+      </ul>
+
+      <p className={`text-center text-xs tabular-nums ${result.totalPct === 100 ? "text-neutral-500" : "text-rose-400"}`}>
+        {result.totalPct === 100
+          ? `total ${fmt(result.placed)} · every dollar placed`
+          : result.totalPct < 100
+          ? `${result.totalPct}% placed · ${fmt(off)} (${100 - result.totalPct}%) still to place`
+          : `${result.totalPct}% — ${fmt(off)} more than the paycheck`}
+      </p>
+
+      {editing && (
+        <div className="space-y-2">
+          {error && <p className="text-xs text-rose-400">{error}</p>}
+          <div className="flex gap-2">
+            <button
+              onClick={save}
+              disabled={busy || result.totalPct !== 100}
+              className="flex-1 py-2 rounded-lg bg-gradient-to-b from-red-500 to-red-600 hover:to-red-500 text-neutral-950 text-sm font-semibold disabled:opacity-40"
+            >
+              {busy ? "Saving…" : "Save split"}
+            </button>
+            <button
+              onClick={() =>
+                setDraft({
+                  mustHaves: String(DEFAULT_SPLIT.mustHaves),
+                  retirement: String(DEFAULT_SPLIT.retirement),
+                  emergency: String(DEFAULT_SPLIT.emergency),
+                  couldHaves: String(DEFAULT_SPLIT.couldHaves),
+                })
+              }
+              className="px-3 py-2 rounded-lg border border-neutral-700 text-sm hover:bg-neutral-800"
+            >
+              50/15/5/30
+            </button>
+            <button onClick={() => setEditing(false)} className="px-3 py-2 rounded-lg border border-neutral-700 text-sm hover:bg-neutral-800">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

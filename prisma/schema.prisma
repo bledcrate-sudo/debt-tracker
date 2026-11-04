@@ -263,6 +263,11 @@ model PaycheckProfile {
   ytdGross          Float? // year-to-date gross from the last pay stub, so CPP/EI stop at their maximums
   otherDeductions   Float    @default(0) // per cheque, after tax (benefits, union dues…)
   northernDeduction Boolean  @default(false) // northern residents deduction claimed on the TD1
+  // How take-home pay is split (percent of each cheque, adding up to 100).
+  splitMustHaves    Int      @default(50)
+  splitRetirement   Int      @default(15)
+  splitEmergency    Int      @default(5)
+  splitCouldHaves   Int      @default(30)
   updatedAt         DateTime @updatedAt
 }
 

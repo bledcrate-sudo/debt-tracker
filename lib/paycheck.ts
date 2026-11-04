@@ -185,3 +185,42 @@ export function estimatePaycheck(input: PaycheckInput): PaycheckEstimate {
     eiMaxed: gross > 0 && eiRoom <= 0.005,
   };
 }
+
+// --- Splitting a cheque -----------------------------------------------------
+// Divides take-home pay into buckets by percentage (50/15/5/30 by default),
+// with every cent placed somewhere.
+
+export const SPLIT_BUCKETS = [
+  { key: "mustHaves", label: "Must haves", hint: "Rent, bills, groceries, debt minimums" },
+  { key: "retirement", label: "Retirement", hint: "RRSP, TFSA, pension" },
+  { key: "emergency", label: "Emergency", hint: "Your rainy-day fund" },
+  { key: "couldHaves", label: "Could haves", hint: "Fun money — eating out, shopping, trips" },
+] as const;
+export type SplitKey = (typeof SPLIT_BUCKETS)[number]["key"];
+export type SplitPcts = Record<SplitKey, number>;
+export const DEFAULT_SPLIT: SplitPcts = { mustHaves: 50, retirement: 15, emergency: 5, couldHaves: 30 };
+
+export type SplitResult = {
+  parts: Record<SplitKey, number>;
+  totalPct: number;
+  placed: number; // sum of the parts
+  unplaced: number; // amount − placed (negative when the percentages add up to more than 100)
+};
+
+// Works in cents: each part is rounded down, then the leftover cents go to
+// the parts that lost the most to rounding, so at 100% the parts add up to
+// the amount exactly.
+export function splitPaycheck(amount: number, pcts: SplitPcts): SplitResult {
+  const keys = SPLIT_BUCKETS.map((b) => b.key);
+  const totalPct = keys.reduce((s, k) => s + Math.max(0, pcts[k] || 0), 0);
+  const amountCents = Math.max(0, Math.round(amount * 100));
+  const exact = keys.map((k) => (amountCents * Math.max(0, pcts[k] || 0)) / 100);
+  const cents = exact.map(Math.floor);
+  const target = Math.round((amountCents * totalPct) / 100);
+  let left = target - cents.reduce((s, c) => s + c, 0);
+  const byRemainder = exact.map((v, i) => [v - Math.floor(v), i] as const).sort((a, b) => b[0] - a[0]);
+  for (let j = 0; left > 0 && j < byRemainder.length; j++, left--) cents[byRemainder[j][1]]++;
+  const parts = Object.fromEntries(keys.map((k, i) => [k, cents[i] / 100])) as Record<SplitKey, number>;
+  const placed = cents.reduce((s, c) => s + c, 0) / 100;
+  return { parts, totalPct, placed, unplaced: Math.round((amountCents / 100 - placed) * 100) / 100 };
+}
