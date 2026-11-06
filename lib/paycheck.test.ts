@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { estimatePaycheck, federalBpa, splitPaycheck, DEFAULT_SPLIT, type PaycheckInput } from "./paycheck";
+import { estimatePaycheck, federalBpa, splitPaycheck, splitPaycheckWithDebt, perCheque, DEFAULT_SPLIT, type PaycheckInput } from "./paycheck";
 
 const base: PaycheckInput = {
   hourlyRate: 30,
@@ -137,5 +137,42 @@ describe("splitPaycheck", () => {
 
   it("handles nothing to split", () => {
     expect(splitPaycheck(0, DEFAULT_SPLIT).placed).toBe(0);
+  });
+});
+
+describe("debt in the paycheck split", () => {
+  it("spreads a monthly payment over the cheques in a year", () => {
+    expect(perCheque(900, "biweekly")).toBe(415.38); // 900 × 12 / 26
+    expect(perCheque(900, "weekly")).toBe(207.69);
+    expect(perCheque(900, "semimonthly")).toBe(450);
+    expect(perCheque(900, "monthly")).toBe(900);
+  });
+
+  it("takes debt off the top and splits the rest", () => {
+    const s = splitPaycheckWithDebt(2000, 400, DEFAULT_SPLIT);
+    expect(s.debt).toBe(400);
+    expect(s.afterDebt).toBe(1600);
+    expect(s.parts).toEqual({ mustHaves: 800, retirement: 240, emergency: 80, couldHaves: 480 });
+    expect(s.placed).toBe(2000);
+    expect(s.unplaced).toBe(0);
+  });
+
+  it("still places every cent with an uneven debt payment", () => {
+    const s = splitPaycheckWithDebt(1855.7, 415.38, DEFAULT_SPLIT);
+    const sum = s.debt + Object.values(s.parts).reduce((a, b) => a + b, 0);
+    expect(Math.round(sum * 100)).toBe(185570);
+    expect(s.unplaced).toBe(0);
+  });
+
+  it("flags a debt payment bigger than the cheque", () => {
+    const s = splitPaycheckWithDebt(500, 800, DEFAULT_SPLIT);
+    expect(s.debt).toBe(500);
+    expect(s.debtShort).toBe(300);
+    expect(s.afterDebt).toBe(0);
+    expect(s.placed).toBe(500);
+  });
+
+  it("is the plain split with no debt", () => {
+    expect(splitPaycheckWithDebt(2000, 0, DEFAULT_SPLIT).parts).toEqual(splitPaycheck(2000, DEFAULT_SPLIT).parts);
   });
 });

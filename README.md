@@ -141,7 +141,10 @@ Settings → Bank always still works on demand either way.
   `lib/paycheck.ts`; update them each January.
   **Split your paycheck** divides the cheque (the take-home estimate, your last pay deposit, or
   any amount you type) into Must haves 50%, Retirement 15%, Emergency 5% and Could haves 30%, with
-  every cent placed; change the percentages with Edit split (they must add up to 100%).
+  every cent placed; change the percentages with Edit split (they must add up to 100%). Debt comes
+  off the top first: the debt-free challenge's monthly amount (or, without one, your debts' minimum
+  payments) spread over your cheques — $900/mo is $415.38 of a biweekly cheque — and flagged if the
+  cheque can't cover it.
 - **All transactions** — one feed of every transaction from every connected bank and account
   (Plaid and SimpleFIN together), grouped by day, each tagged with its bank · account and whether
   it's Income, Spent, Moves or a Transfer between your own accounts, with a per-bank filter, a

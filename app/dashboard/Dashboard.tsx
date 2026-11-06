@@ -37,7 +37,7 @@ import {
 } from "./lib";
 import { IMPORT_NOTE } from "@/lib/constants";
 import { CATEGORIES, type Category } from "@/lib/categorize";
-import { estimatePaycheck, splitPaycheck, PAY_PERIODS, SPLIT_BUCKETS, DEFAULT_SPLIT, type PayFrequency, type SplitPcts } from "@/lib/paycheck";
+import { estimatePaycheck, splitPaycheckWithDebt, perCheque, PAY_PERIODS, SPLIT_BUCKETS, DEFAULT_SPLIT, type PayFrequency, type SplitPcts } from "@/lib/paycheck";
 import {
   planChallenge,
   todayIn,
@@ -842,7 +842,7 @@ export default function Dashboard({
         <span className="text-neutral-500 text-lg">›</span>
       </button>
 
-      <PaycheckSection className={phoneShow(phoneTab === "home")} nextPay={nextPay} lastPay={lastPay} />
+      <PaycheckSection className={phoneShow(phoneTab === "home")} nextPay={nextPay} lastPay={lastPay} debtMinimums={totalMinPayments} />
 
       <BudgetSection
         className={phoneShow(phoneTab === "home")}
@@ -2441,6 +2441,10 @@ function BudgetEditor({
 // or one balance the user sets themselves and pays down by logging payments
 // here. The iPhone home-screen widget shows the same countdown once linked
 // with the code it displays, and is told to refresh whenever it changes.
+// Fired when the debt-free challenge changes, so other cards using its
+// monthly amount (the paycheck split) re-read it.
+const CHALLENGE_CHANGED = "debty:challenge-changed";
+
 type ChallengeState = {
   monthlyAmount: number;
   strategy: Strategy;
@@ -2482,6 +2486,13 @@ function DebtChallengeSection({
   const [payBusy, setPayBusy] = useState(false);
   const [allPayments, setAllPayments] = useState(false);
   const today = todayIn();
+
+  // After a change: refresh the iPhone widget and anything else showing the
+  // challenge's monthly amount.
+  const notifyChanged = () => {
+    reloadWidget();
+    window.dispatchEvent(new Event(CHALLENGE_CHANGED));
+  };
 
   const apply = (d: { challenge: ChallengeState | null; payments?: ChallengePayment[] } | null) => {
     setChallenge(d?.challenge ?? null);
@@ -2570,7 +2581,7 @@ function DebtChallengeSection({
     if (!r.ok) return setError(body?.error ?? "Couldn't save the challenge");
     apply(body);
     setEditing(false);
-    reloadWidget();
+    notifyChanged();
   }
 
   async function logPayment() {
@@ -2589,7 +2600,7 @@ function DebtChallengeSection({
     apply(body);
     setPayAmount("");
     setPayDate("");
-    reloadWidget();
+    notifyChanged();
   }
 
   async function removePayment(id: string) {
@@ -2597,7 +2608,7 @@ function DebtChallengeSection({
     const r = await fetch(`/api/challenge/payments?id=${encodeURIComponent(id)}&today=${today}`, { method: "DELETE" });
     if (r.ok) {
       apply(await r.json());
-      reloadWidget();
+      notifyChanged();
     }
   }
 
@@ -2607,7 +2618,7 @@ function DebtChallengeSection({
     if (r.ok) {
       apply(null);
       setEditing(false);
-      reloadWidget();
+      notifyChanged();
     }
   }
 
@@ -3030,10 +3041,12 @@ function PaycheckSection({
   className = "",
   nextPay,
   lastPay,
+  debtMinimums,
 }: {
   className?: string;
   nextPay: Date | null;
   lastPay: { amount: number; date: Date } | null;
+  debtMinimums: number;
 }) {
   const fmt = useContext(CurrencyContext);
   const [open, toggle] = usePersistentToggle("dt.paycheck.open", true);
@@ -3253,6 +3266,8 @@ function PaycheckSection({
             lastPay={lastPay?.amount ?? null}
             split={split}
             onSaved={setSplit}
+            payFrequency={f.payFrequency}
+            debtMinimums={debtMinimums}
           />
 
           <div className="space-y-1 text-[11px] text-neutral-500">
@@ -3290,13 +3305,38 @@ function PaycheckSplit({
   lastPay,
   split,
   onSaved,
+  payFrequency,
+  debtMinimums,
 }: {
   estimate: number | null;
   lastPay: number | null;
   split: SplitPcts;
   onSaved: (s: SplitPcts) => void;
+  payFrequency: PayFrequency;
+  debtMinimums: number; // total monthly minimums across debts
 }) {
   const fmt = useContext(CurrencyContext);
+  // What goes to debt each month: the debt-free challenge's commitment when
+  // there is one, otherwise the debts' minimum payments. Re-read whenever
+  // the challenge changes on the Debt tab.
+  const [challengeMonthly, setChallengeMonthly] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () =>
+      fetch(`/api/challenge?today=${todayIn()}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => !cancelled && setChallengeMonthly(d?.challenge && !d?.result?.done ? d.challenge.monthlyAmount : null))
+        .catch(() => {});
+    load();
+    window.addEventListener(CHALLENGE_CHANGED, load);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(CHALLENGE_CHANGED, load);
+    };
+  }, []);
+  const debtMonthly = challengeMonthly ?? debtMinimums;
+  const debtSource = challengeMonthly != null ? "your debt-free challenge" : "your minimum payments";
+  const debtDue = perCheque(debtMonthly, payFrequency);
   const [typed, setTyped] = useState("");
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Record<keyof SplitPcts, string>>({ mustHaves: "", retirement: "", emergency: "", couldHaves: "" });
@@ -3316,8 +3356,10 @@ function PaycheckSplit({
         couldHaves: Math.max(0, Math.round(Number(draft.couldHaves) || 0)),
       }
     : split;
-  const result = splitPaycheck(amount, pcts);
-  const maxPct = Math.max(1, ...SPLIT_BUCKETS.map((b) => pcts[b.key]));
+  const result = splitPaycheckWithDebt(amount, debtDue, pcts);
+  // Bars are sized by dollars, so the debt row compares with the rest.
+  const maxPart = Math.max(0.01, result.debt, ...SPLIT_BUCKETS.map((b) => result.parts[b.key]));
+  const chequesPerMonth = PAY_PERIODS[payFrequency] / 12;
 
   function startEditing() {
     setDraft({
@@ -3375,6 +3417,29 @@ function PaycheckSplit({
       </label>
 
       <ul className="space-y-3">
+        {debtDue > 0 && (
+          <li>
+            <div className="flex items-baseline justify-between gap-3 mb-1">
+              <span className="font-semibold text-sm">
+                Debt <span className="text-xs font-normal text-neutral-500">first</span>
+              </span>
+              <span className="font-bold tabular-nums">{fmt(result.debt)}</span>
+            </div>
+            <div className="h-3 rounded-full bg-neutral-800 overflow-hidden">
+              <div className="h-full rounded-full bg-rose-700 transition-all" style={{ width: `${Math.min(100, (result.debt / maxPart) * 100)}%` }} />
+            </div>
+            <p className="mt-0.5 text-[11px] text-neutral-500 tabular-nums">
+              {fmt(debtMonthly)}/mo from {debtSource}
+              {chequesPerMonth !== 1 ? `, spread over ${Number.isInteger(chequesPerMonth) ? chequesPerMonth : chequesPerMonth.toFixed(2)} cheques a month` : ""}
+            </p>
+            {result.debtShort > 0 && (
+              <p className="mt-0.5 text-[11px] text-rose-400 tabular-nums">This cheque is {fmt(result.debtShort)} short of the debt payment.</p>
+            )}
+            {result.afterDebt > 0 && (
+              <p className="mt-2 text-[11px] text-neutral-500 tabular-nums">{fmt(result.afterDebt)} left after debt, split by your percentages:</p>
+            )}
+          </li>
+        )}
         {SPLIT_BUCKETS.map((b) => {
           const p = pcts[b.key];
           const fun = b.key === "couldHaves";
@@ -3403,7 +3468,7 @@ function PaycheckSplit({
               <div className="h-3 rounded-full bg-neutral-800 overflow-hidden">
                 <div
                   className={`h-full rounded-full transition-all ${fun ? "bg-gradient-to-r from-red-600 to-rose-400" : "bg-neutral-300"}`}
-                  style={{ width: `${Math.min(100, (p / maxPct) * 100)}%` }}
+                  style={{ width: `${Math.min(100, (result.parts[b.key] / maxPart) * 100)}%` }}
                 />
               </div>
               {editing && <p className="mt-0.5 text-[11px] text-neutral-500">{b.hint}</p>}

@@ -191,7 +191,7 @@ export function estimatePaycheck(input: PaycheckInput): PaycheckEstimate {
 // with every cent placed somewhere.
 
 export const SPLIT_BUCKETS = [
-  { key: "mustHaves", label: "Must haves", hint: "Rent, bills, groceries, debt minimums" },
+  { key: "mustHaves", label: "Must haves", hint: "Rent, bills, groceries (debt comes off first)" },
   { key: "retirement", label: "Retirement", hint: "RRSP, TFSA, pension" },
   { key: "emergency", label: "Emergency", hint: "Your rainy-day fund" },
   { key: "couldHaves", label: "Could haves", hint: "Fun money — eating out, shopping, trips" },
@@ -223,4 +223,34 @@ export function splitPaycheck(amount: number, pcts: SplitPcts): SplitResult {
   const parts = Object.fromEntries(keys.map((k, i) => [k, cents[i] / 100])) as Record<SplitKey, number>;
   const placed = cents.reduce((s, c) => s + c, 0) / 100;
   return { parts, totalPct, placed, unplaced: Math.round((amountCents / 100 - placed) * 100) / 100 };
+}
+
+// What a monthly payment costs per cheque: spread over the cheques in a
+// year (a $900/mo payment is $415.38 of each biweekly cheque).
+export function perCheque(monthly: number, frequency: PayFrequency): number {
+  return Math.round(((Math.max(0, monthly) * 12) / PAY_PERIODS[frequency]) * 100) / 100;
+}
+
+export type DebtSplitResult = SplitResult & {
+  debt: number; // what this cheque sends to debt
+  debtShort: number; // how much of the debt payment the cheque can't cover
+  afterDebt: number; // what the percentages split
+};
+
+// Debt comes off the top, then the percentages split what's left; at 100%
+// every cent of the cheque is still placed.
+export function splitPaycheckWithDebt(amount: number, debtDue: number, pcts: SplitPcts): DebtSplitResult {
+  const amountCents = Math.max(0, Math.round(amount * 100));
+  const dueCents = Math.max(0, Math.round(debtDue * 100));
+  const debtCents = Math.min(dueCents, amountCents);
+  const rest = splitPaycheck((amountCents - debtCents) / 100, pcts);
+  const placed = Math.round(debtCents + rest.placed * 100) / 100;
+  return {
+    ...rest,
+    debt: debtCents / 100,
+    debtShort: (dueCents - debtCents) / 100,
+    afterDebt: (amountCents - debtCents) / 100,
+    placed,
+    unplaced: Math.round(amountCents - placed * 100) / 100,
+  };
 }
